@@ -13,7 +13,10 @@ import { afterFlush, Effect, type PendingSource, type PendingWaiter, reportError
 
 export interface AppContext {
     readonly dev: boolean;
+    /** Erreur de rendu (liaison, effet, construction, chargement) interceptée par personne. */
     handleUncaughtError(error: unknown): void;
+    /** Erreur d'action (gestionnaire d'événement) interceptée par aucun <ErrorHandler>. */
+    handleActionError(error: unknown): void;
 }
 
 let currentOwner: Owner | null = null;
@@ -46,6 +49,8 @@ export class AmbiguousService {
 interface OwnerExtra {
     /** Gestionnaire d'erreurs local : renvoie true si l'erreur est prise en charge. */
     errorHandler: ((error: unknown) => boolean) | null;
+    /** Gestionnaire des erreurs d'actions (<ErrorHandler>) : renvoie true si l'erreur est prise en charge. */
+    actionHandler: ((error: unknown) => boolean) | null;
     /** Services fournis à ce sous-arbre, sous leur classe exacte (ou une clé explicite). */
     providers: Map<unknown, unknown> | null;
     /** Mêmes services, sous leurs classes parentes (plusieurs candidats : AmbiguousService). */
@@ -71,7 +76,7 @@ export class Owner {
     private extra: OwnerExtra | null = null;
 
     private get x(): OwnerExtra {
-        return (this.extra ??= { errorHandler: null, providers: null, inherited: null, mountCallbacks: null, controller: null });
+        return (this.extra ??= { errorHandler: null, actionHandler: null, providers: null, inherited: null, mountCallbacks: null, controller: null });
     }
 
     /** Gestionnaire d'erreurs local : renvoie true si l'erreur est prise en charge. */
@@ -81,6 +86,15 @@ export class Owner {
 
     set errorHandler(handler: ((error: unknown) => boolean) | null) {
         this.x.errorHandler = handler;
+    }
+
+    /** Gestionnaire des erreurs d'actions (<ErrorHandler>) : renvoie true si l'erreur est prise en charge. */
+    get actionHandler(): ((error: unknown) => boolean) | null {
+        return this.extra === null ? null : this.extra.actionHandler;
+    }
+
+    set actionHandler(handler: ((error: unknown) => boolean) | null) {
+        this.x.actionHandler = handler;
     }
 
     constructor(parent: Owner | null = currentOwner) {
@@ -231,6 +245,33 @@ export class Owner {
             for (const source of pending) {
                 boundary.wait(source, this);
             }
+        }
+    }
+
+    /**
+     * Erreur d'une action (gestionnaire d'événement, y compris une promesse rejetée) : elle remonte au
+     * <ErrorHandler> le plus proche, sans passer par les <ErrorBoundary> (le contenu reste affiché),
+     * puis à l'application (onError, sinon la console ; l'application reste montée).
+     */
+    handleActionError(error: unknown): void {
+        let owner: Owner | null = this;
+        while (owner !== null) {
+            const handler = owner.extra === null ? null : owner.extra.actionHandler;
+            if (handler !== null && !owner.disposed) {
+                try {
+                    if (handler(error)) {
+                        return;
+                    }
+                } catch (e) {
+                    error = e;
+                }
+            }
+            owner = owner.parent;
+        }
+        if (this.app !== null) {
+            this.app.handleActionError(error);
+        } else {
+            reportError(error);
         }
     }
 

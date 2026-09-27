@@ -5,7 +5,7 @@
 // Composants et application
 export { Component, type ComponentClass } from "./runtime/component";
 export { mount, type MountOptions, type Root } from "./runtime/app";
-export { Suspense, ErrorBoundary, Portal } from "./runtime/builtins";
+export { Suspense, ErrorBoundary, ErrorHandler, Portal } from "./runtime/builtins";
 
 // Templates
 export {

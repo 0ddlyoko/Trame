@@ -445,7 +445,8 @@ function delegationGroup(type: string, capture: boolean, passive: boolean): Dele
 
 /**
  * Exécute un gestionnaire en batch (le DOM est à jour dès qu'il se termine). Ses erreurs, y compris
- * celles d'une promesse renvoyée, remontent au gestionnaire d'erreurs du composant.
+ * celles d'une promesse renvoyée, sont des erreurs d'actions : elles remontent au <ErrorHandler> le
+ * plus proche (voir Owner.handleActionError), pas aux <ErrorBoundary>.
  * Il s'exécute dans le scope du composant : un objet qu'il crée (avec des @resource ou des @effect)
  * est nettoyé à la destruction du composant.
  */
@@ -456,7 +457,7 @@ function runHandler(record: EventRecord, ev: Event): void {
     }
     const report = (error: unknown) => {
         if (owner !== null) {
-            owner.handleError(annotateError(error, loc, owner));
+            owner.handleActionError(annotateError(error, loc, owner));
         } else {
             console.error(error);
         }

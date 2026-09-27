@@ -14,7 +14,7 @@ describe("gestionnaires d'événements : erreurs asynchrones", () => {
     ] as const;
 
     for (const [label, attr] of forms) {
-        test(`${label} : le rejet de la promesse atteint l'<ErrorBoundary>`, async () => {
+        test(`${label} : le rejet de la promesse atteint l'<ErrorHandler>`, async () => {
             class Child extends Component {
                 static template = xml`<button ${attr}>x</button>`;
                 @state accessor count = 0;
@@ -22,14 +22,17 @@ describe("gestionnaires d'événements : erreurs asynchrones", () => {
                     throw new Error("échec de l'enregistrement");
                 }
             }
+            const received: string[] = [];
             class Parent extends Component {
-                static template = xml`<div><ErrorBoundary><t t-set-slot="fallback" t-slot-scope="e">KO {{ e.error.message }}</t><Child/></ErrorBoundary></div>`;
+                static template = xml`<div><ErrorHandler onError="(e) => received.push(e.message)"><Child/></ErrorHandler></div>`;
                 static components = { Child };
+                received = received;
             }
-            const { fixture, html } = await render(Parent);
+            const { fixture } = await render(Parent);
             (fixture.querySelector("button") as HTMLButtonElement).click();
             await settle();
-            expect(html()).toBe("<div>KO échec de l'enregistrement</div>");
+            expect(received).toEqual(["échec de l'enregistrement"]);
+            expect(fixture.querySelector("button")).not.toBeNull();
         });
     }
 });

@@ -161,7 +161,7 @@ export type AST =
     | ASTKeyed;
 
 /** Composants fournis par Trame, utilisables sans les déclarer dans `static components`. */
-export const BUILTIN_COMPONENTS = new Set(["Suspense", "ErrorBoundary", "Portal"]);
+export const BUILTIN_COMPONENTS = new Set(["Suspense", "ErrorBoundary", "ErrorHandler", "Portal"]);
 
 const KNOWN_DIRECTIVES = new Set([
     "t-if",

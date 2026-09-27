@@ -173,7 +173,28 @@ class Card extends Component {
 - **Lecture seule profonde** : un enfant ne modifie jamais ses props. Il prévient le parent par un callback (`onUpdate`, `onRemove`…). C'est garanti par le type de `this.props` (`DeepReadonly`) et par `trame-check`. À l'exécution, l'enfant reçoit les objets mêmes du parent, en dev comme en prod (même identité) ; seul l'objet `this.props` refuse les écritures.
 - **Slots** : `t-set-slot="nom"` (avec `t-slot-scope="s"` pour recevoir des valeurs) côté parent, `t-slot="nom"` côté enfant. Le contenu de `t-slot` sert de contenu par défaut.
 - **Composant dynamique** : `<t t-component="expr"/>`.
-- **Composants intégrés** : `<Suspense>` (slot `fallback`), `<ErrorBoundary>` (slot `fallback` avec `{ error, reset }`) et `<Portal target="'#id'">`.
+- **Composants intégrés** : `<Suspense>` (slot `fallback`), `<ErrorBoundary>` (slot `fallback` avec `{ error, reset }`), `<ErrorHandler onError="…">` et `<Portal target="'#id'">`.
+
+### Erreurs
+
+Trame distingue deux sortes d'erreurs :
+
+| | Erreurs de rendu | Erreurs d'actions |
+|---|---|---|
+| Origine | liaison du template, `@effect`, construction d'un composant, chargement d'une donnée | gestionnaire d'événement (`t-on-*`), y compris une promesse rejetée |
+| Interceptées par | `<ErrorBoundary>` la plus proche : son contenu est remplacé par le slot `fallback` | `<ErrorHandler>` le plus proche : `onError(error)` est appelé, **le contenu reste affiché** |
+| Sinon | `mount(..., { onError })`, sinon console et démontage de l'application | `mount(..., { onError })`, sinon console ; l'application reste montée |
+
+```xml
+<ErrorHandler onError="(e) => notifications.add(e.message)">   <!-- enregistrement refusé, réseau... -->
+    <ErrorBoundary>                                              <!-- vue cassée : écran de repli -->
+        <t t-set-slot="fallback" t-slot-scope="e">Erreur : {{ e.error.message }}</t>
+        <OrderForm/>
+    </ErrorBoundary>
+</ErrorHandler>
+```
+
+Si `onError` lève à son tour, l'erreur remonte au `<ErrorHandler>` suivant. C'est le comportement d'OWL 3 et de React : une action ratée ne remplace pas l'écran et ne démonte pas l'application.
 
 ## Services
 
@@ -283,7 +304,7 @@ Les textes statiques des templates et les attributs `title`, `placeholder`, `alt
 
   La localisation figure dans la pile d'appels, affichée par la console, et dans `error.trameLocation`. Le message de l'erreur n'est pas modifié, pour qu'un `<ErrorBoundary>` affiche un texte propre. Une erreur venant d'une extension de template l'indique aussi (`template "OrderForm" (extension n°1), ligne 2`).
 
-`onError` permet d'intercepter les erreurs non gérées. Sans lui, elles sont affichées dans la console et l'application est démontée.
+`onError` reçoit les erreurs que rien n'a interceptées (voir [Erreurs](#erreurs)). Sans lui, elles sont affichées dans la console ; une erreur de rendu démonte en plus l'application.
 
 ## Vérification des templates : `trame-check`
 

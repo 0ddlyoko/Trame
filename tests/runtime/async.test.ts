@@ -322,7 +322,8 @@ describe("<ErrorBoundary>", () => {
         expect(html()).toBe("<div><p>ok</p></div>");
     });
 
-    test("erreur dans un gestionnaire d'événement", async () => {
+    test("erreur dans un gestionnaire d'événement : le contenu reste affiché (erreur d'action, voir <ErrorHandler>)", async () => {
+        const errors: unknown[] = [];
         class Fragile extends Component {
             static template = xml`<button t-on-click="boom">x</button>`;
             boom() {
@@ -333,10 +334,11 @@ describe("<ErrorBoundary>", () => {
             static template = xml`<ErrorBoundary><t t-set-slot="fallback" t-slot-scope="e">{{ e.error.message }}</t><Fragile/></ErrorBoundary>`;
             static components = { Fragile };
         }
-        const { html, fixture } = await render(Page);
+        const { html, fixture } = await render(Page, { onError: (e) => errors.push(e) });
         fixture.querySelector("button")!.click();
         await settle();
-        expect(html()).toBe("clic");
+        expect(html()).toBe("<button>x</button>");
+        expect(String(errors[0])).toMatch(/clic/);
     });
 
     test("erreur de chargement d'une ressource", async () => {

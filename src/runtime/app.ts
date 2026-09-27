@@ -25,7 +25,11 @@ export interface MountOptions {
     provide?: unknown[];
     /** Mode développement : validation des props, messages détaillés. */
     dev?: boolean;
-    /** Appelé pour une erreur non interceptée (par défaut : console.error puis destruction). */
+    /**
+     * Appelé pour une erreur non interceptée :
+     * - erreur de rendu hors de toute <ErrorBoundary> (par défaut : console.error, puis destruction) ;
+     * - erreur d'action hors de tout <ErrorHandler> (par défaut : console.error ; l'application reste montée).
+     */
     onError?: (error: unknown) => void;
 }
 
@@ -66,6 +70,14 @@ export function mount<C extends Component>(Ctor: ComponentClass<C>, target: Elem
                 }
                 console.error(error);
                 destroy();
+            },
+            handleActionError(error: unknown) {
+                // Une action ratée (enregistrement refusé...) ne démonte pas l'application.
+                if (options.onError) {
+                    options.onError(error);
+                } else {
+                    console.error(error);
+                }
             },
         };
 

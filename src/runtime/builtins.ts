@@ -12,12 +12,17 @@
  *     ...
  *   </ErrorBoundary>
  *
+ *   <ErrorHandler onError="(e) => notify(e)">   reçoit les erreurs des actions de son contenu
+ *     ...                    (gestionnaires d'événements, promesses rejetées) ; le contenu reste affiché
+ *   </ErrorHandler>
+ *
  *   <Portal target="'#modals'">   insère son contenu ailleurs dans le document.
  *     ...
  *   </Portal>
  */
 
 import { Boundary, getOwner, Owner } from "../reactivity/owner";
+import { props, t } from "../props";
 import { builtinComponents, Component, type ComponentClass, type Slots } from "./component";
 import { buildItem, insertItem, type Item, itemFirst, Region, removeItem, removeRange, type Root } from "./regions";
 
@@ -199,6 +204,38 @@ export class ErrorBoundary extends Component {
     static customRender = (_: ErrorBoundary, slots: Slots | null): Root[] => [new ErrorRegion(detachedAnchor(), slots)];
 }
 
+// --- ErrorHandler --------------------------------------------------------------------------------
+
+class ErrorHandlerRegion extends Region {
+    private readonly item: Item;
+
+    constructor(anchor: Node, component: ErrorHandler, slots: Slots | null) {
+        super(anchor);
+        const holder = new Owner(requireOwner());
+        holder.actionHandler = (error) => {
+            component.props.onError(error);
+            return true;
+        };
+        const slot = slots?.default;
+        this.item = buildItem(holder, slot ? () => slot() : emptyRoots);
+        insertItem(this.item, this.anchor.parentNode!, this.anchor);
+    }
+
+    firstNode(): Node {
+        return itemFirst(this.item);
+    }
+}
+
+/**
+ * Reçoit les erreurs des actions de son contenu (gestionnaires d'événements, y compris les promesses
+ * rejetées) : `onError` est appelé et le contenu reste affiché. Les erreurs de rendu (liaisons, effets,
+ * construction, chargement) ne passent pas par lui : elles vont à <ErrorBoundary>.
+ */
+export class ErrorHandler extends Component {
+    static customRender = (component: ErrorHandler, slots: Slots | null): Root[] => [new ErrorHandlerRegion(detachedAnchor(), component, slots)];
+    props = props({ onError: t.func<(error: unknown) => void>() });
+}
+
 // --- Portal --------------------------------------------------------------------------------------
 
 class PortalRegion extends Region {
@@ -234,4 +271,5 @@ export class Portal extends Component {
 
 builtinComponents.Suspense = Suspense as ComponentClass;
 builtinComponents.ErrorBoundary = ErrorBoundary as ComponentClass;
+builtinComponents.ErrorHandler = ErrorHandler as unknown as ComponentClass;
 builtinComponents.Portal = Portal as ComponentClass;
