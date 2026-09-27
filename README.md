@@ -101,6 +101,11 @@ class OrderLine {
 }
 ```
 
+**Nettoyage.** Les `@resource` et `@effect` d'un objet appartiennent au scope dans lequel l'objet est créé, et sont nettoyés avec lui (requête annulée, effet arrêté) :
+- créé pendant la construction d'un composant ou dans un de ses gestionnaires d'événements : le composant ;
+- créé dans un `@effect` : cette exécution de l'effet (nettoyé avant l'exécution suivante) ;
+- créé ailleurs (module, après un `await`) : aucun scope, l'objet vit aussi longtemps que l'application. Créez donc l'objet avant le premier `await`.
+
 Les mises à jour sont regroupées et appliquées au microtask suivant. Dans un gestionnaire d'événement, le DOM est à jour dès que le gestionnaire se termine. `batch(fn)` force une application synchrone, et `await nextTick()` attend la fin des mises à jour (pratique dans les tests).
 
 `JSON.stringify(obj)` inclut les champs `@state` : un `toJSON()` est fourni automatiquement.

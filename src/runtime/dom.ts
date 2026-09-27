@@ -4,7 +4,7 @@
 
 import { TRANSLATABLE_ATTRIBUTES, translateTemplateText } from "../i18n";
 import { annotateError, batch } from "../reactivity/core";
-import { getOwner, type Owner } from "../reactivity/owner";
+import { getOwner, type Owner, runWithOwner } from "../reactivity/owner";
 import { Markup, renderEffect } from "./regions";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -442,6 +442,8 @@ function delegationGroup(type: string, capture: boolean, passive: boolean): Dele
 /**
  * Exécute un gestionnaire en batch (le DOM est à jour dès qu'il se termine). Ses erreurs, y compris
  * celles d'une promesse renvoyée, remontent au gestionnaire d'erreurs du composant.
+ * Il s'exécute dans le scope du composant : un objet qu'il crée (avec des @resource ou des @effect)
+ * est nettoyé à la destruction du composant.
  */
 function runHandler(record: EventRecord, ev: Event): void {
     const { owner, loc } = record;
@@ -456,12 +458,14 @@ function runHandler(record: EventRecord, ev: Event): void {
         }
     };
     try {
-        batch(() => {
-            const result = record.handler(ev) as Promise<unknown> | undefined;
-            if (result !== null && typeof result === "object" && typeof result.then === "function") {
-                result.then(undefined, report);
-            }
-        });
+        runWithOwner(owner, () =>
+            batch(() => {
+                const result = record.handler(ev) as Promise<unknown> | undefined;
+                if (result !== null && typeof result === "object" && typeof result.then === "function") {
+                    result.then(undefined, report);
+                }
+            }),
+        );
     } catch (error) {
         report(error);
     }

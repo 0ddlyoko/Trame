@@ -15,7 +15,7 @@
 
 import { initPatches } from "./patch";
 import { Computed, Effect, PRIORITY_USER, scheduleMicrotask, Signal, untrack } from "./reactivity/core";
-import { getOwner, type Owner, runWithOwner } from "./reactivity/owner";
+import { getOwner, Owner, runWithOwner } from "./reactivity/owner";
 import { type Fetcher, Resource, type ResourceOptions } from "./reactivity/resource";
 import { reactive } from "./reactivity/store";
 
@@ -162,6 +162,9 @@ export function resource<This extends object, V>(
 /**
  * Effet de bord : la méthode s'exécute (après le montage pour un composant), puis à chaque
  * changement des valeurs qu'elle lit. Elle peut renvoyer une fonction de nettoyage.
+ *
+ * Chaque exécution a son propre scope : les objets qu'elle crée (avec des @resource ou des @effect)
+ * sont nettoyés avant l'exécution suivante et à la destruction du propriétaire.
  */
 export function effect<This extends object>(
     _method: (this: This) => void | (() => void),
@@ -175,11 +178,31 @@ export function effect<This extends object>(
             if (owner?.disposed) {
                 return;
             }
-            new Effect(() => self[name].call(self), owner, PRIORITY_USER).run();
+            let runOwner: Owner | null = null;
+            new Effect(
+                () => {
+                    runOwner?.dispose();
+                    if (owner === null) {
+                        return self[name].call(self);
+                    }
+                    const scope = new Owner(owner);
+                    runOwner = scope;
+                    const cleanup = runWithOwner(scope, () => self[name].call(self));
+                    // Les effets des objets créés démarrent tout de suite (le propriétaire est affiché).
+                    if (owner.live) {
+                        scope.activate();
+                    }
+                    return cleanup;
+                },
+                owner,
+                PRIORITY_USER,
+            ).run();
         };
-        if (owner !== null) {
+        if (owner !== null && !owner.live) {
             owner.onMount(start);
         } else {
+            // Propriétaire déjà affiché (ou absent) : on attend la fin de la construction de l'objet,
+            // sinon l'effet verrait des champs pas encore initialisés.
             scheduleMicrotask(start);
         }
     });

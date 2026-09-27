@@ -1,6 +1,6 @@
 // Non-régression : points soulevés par la revue de code (un bloc describe par point).
 import { describe, expect, test } from "vitest";
-import { Component, extendTemplate, inheritTemplate, props, state, t, xml } from "../src/index";
+import { Component, effect, extendTemplate, inheritTemplate, load, props, resource, state, t, xml } from "../src/index";
 import { render, settle } from "./helpers";
 
 describe("gestionnaires d'événements : erreurs asynchrones", () => {
@@ -142,5 +142,70 @@ describe("héritage de templates : une extension de la base atteint les dérivé
         expect((await render(Base)).html()).toBe("<div><i>ext</i><h1>base</h1></div>");
         expect((await render(Derived)).html()).toBe("<div><i>ext</i><h1>base</h1><p>dérivé</p></div>");
         expect((await render(Derived2)).html()).toBe("<div><i>ext</i><h1>base</h1><p>dérivé</p><span>2</span></div>");
+    });
+});
+
+describe("objets créés après la construction : rattachés au bon scope", () => {
+    /** Modèle avec une requête qui ne se termine jamais et un effet : on observe leur nettoyage. */
+    function makeModel(log: string[]) {
+        let n = 0;
+        return class Model {
+            readonly id = ++n;
+            @state accessor tick = 0;
+            @resource accessor data = load(({ signal }) => {
+                signal.addEventListener("abort", () => log.push(`abort ${this.id}`));
+                return new Promise<number>(() => {});
+            });
+            @effect watch() {
+                void this.tick;
+                log.push(`effet ${this.id}`);
+                return () => log.push(`nettoyage ${this.id}`);
+            }
+        };
+    }
+
+    test("créé dans un gestionnaire d'événement : nettoyé à la destruction du composant", async () => {
+        const log: string[] = [];
+        const Model = makeModel(log);
+        class C extends Component {
+            static template = xml`<button t-on-click="make">+</button>`;
+            model: InstanceType<typeof Model> | null = null;
+            make() {
+                this.model = new Model();
+                void this.model.data;
+            }
+        }
+        const r = await render(C);
+        (r.fixture.querySelector("button") as HTMLButtonElement).click();
+        await settle();
+        expect(log).toEqual(["effet 1"]);
+        r.destroy();
+        expect(log).toEqual(["effet 1", "nettoyage 1", "abort 1"]);
+        // L'effet du modèle ne tourne plus après la destruction.
+        r.component.model!.tick++;
+        await settle();
+        expect(log).toEqual(["effet 1", "nettoyage 1", "abort 1"]);
+    });
+
+    test("créé dans un @effect : nettoyé à chaque nouvelle exécution de l'effet et à la destruction", async () => {
+        const log: string[] = [];
+        const Model = makeModel(log);
+        class C extends Component {
+            static template = xml`<p>{{ n }}</p>`;
+            @state accessor n = 0;
+            @effect create() {
+                void this.n;
+                const model = new Model();
+                void model.data;
+            }
+        }
+        const r = await render(C);
+        await settle();
+        expect(log).toEqual(["effet 1"]);
+        r.component.n++;
+        await settle();
+        expect(log).toEqual(["effet 1", "nettoyage 1", "abort 1", "effet 2"]);
+        r.destroy();
+        expect(log).toEqual(["effet 1", "nettoyage 1", "abort 1", "effet 2", "nettoyage 2", "abort 2"]);
     });
 });
