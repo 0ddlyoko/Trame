@@ -373,7 +373,8 @@ class BlockBuilder {
             return `(ev) => ${code}(ev)`;
         }
         // Expression : si elle renvoie une fonction (ex. fonction fléchée), on l'appelle avec l'événement.
-        return `(ev) => { const r = (${code}); if (typeof r === "function") { r(ev); } }`;
+        // Le résultat est renvoyé : une promesse rejetée remonte ainsi au gestionnaire d'erreurs.
+        return `(ev) => { const r = (${code}); return typeof r === "function" ? r(ev) : r; }`;
     }
 
     private getters(entries: [string, string][]): string {
