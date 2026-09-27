@@ -27,7 +27,7 @@ Fichiers produits par `npm run build` (modules ES compatibles ES2019 : Chrome 73
 | Fichier | Contenu |
 |---|---|
 | `dist/trame.js` (`.min.js`) | Version complète : les templates sont compilés dans le navigateur au premier affichage. |
-| `dist/trame.runtime.js` (`.min.js`) | Sans compilateur de templates (47 Ko minifié au lieu de 78 Ko) : les templates doivent être précompilés. |
+| `dist/trame.runtime.js` (`.min.js`) | Sans compilateur de templates (51 Ko minifié au lieu de 93 Ko) : les templates doivent être précompilés. |
 | `dist/trame-compiler.js` | Compilateur de templates autonome (variable globale `TrameCompiler`), à exécuter côté serveur (par exemple QuickJS dans le serveur Rust). `dist/compiler.js` : même chose en module ES. |
 | `dist/testing.js` | Utilitaires de test (`trame/testing`). |
 | `dist/trame-check.mjs` | Vérification des templates par TypeScript (`npx trame-check`). |

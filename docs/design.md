@@ -105,7 +105,7 @@ Le benchmark comparatif (`npm run bench`, liste de 1 000 lignes) tourne dans jsd
 
 jsdom n'est pas un navigateur : ces chiffres donnent une tendance. Le gain principal vient des mises à jour : Trame modifie directement les 100 nœuds texte concernés, là où OWL re-rend la liste et compare ses 1 000 blocs. Il faudra confirmer ces mesures dans un vrai navigateur.
 
-Taille du bundle : ~71 Ko minifié, ~24 Ko en gzip, messages d'erreur détaillés compris.
+Taille du bundle, messages d'erreur détaillés compris : ~93 Ko minifié (~30 Ko en gzip) pour la version complète, dont le compilateur de templates ; ~51 Ko (~17 Ko en gzip) pour `trame.runtime.js`.
 
 ## 4. Limites connues et pistes
 
