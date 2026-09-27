@@ -84,46 +84,34 @@ function describeValue(value: unknown): string {
 
 type Shape = Record<string, AnyValidator>;
 
+// Validateurs partagés : un validateur est immuable (optional(), default()... en créent un nouveau).
+// `props = props({...})` étant évalué à chaque construction, on évite ainsi d'en recréer par instance.
+const STRING = simple<string>("string", (v) => typeof v === "string");
+const NUMBER = simple<number>("number", (v) => typeof v === "number");
+const BOOLEAN = simple<boolean>("boolean", (v) => typeof v === "boolean");
+const FUNCTION = simple<(...args: unknown[]) => unknown>("function", (v) => typeof v === "function");
+const ANY = new Validator<unknown>("any", () => null);
+const instanceValidators = new WeakMap<Function, AnyValidator>();
+
 /** Validateurs de types pour props(). */
 export const t = {
-    string: () => simple<string>("string", (v) => typeof v === "string"),
-    number: () => simple<number>("number", (v) => typeof v === "number"),
-    boolean: () => simple<boolean>("boolean", (v) => typeof v === "boolean"),
-    func: <F extends (...args: never[]) => unknown = (...args: unknown[]) => unknown>() =>
-        simple<F>("function", (v) => typeof v === "function"),
-    any: <T = unknown>() => new Validator<T>("any", () => null),
-    instanceOf: <C extends abstract new (...args: never[]) => unknown>(ctor: C) =>
-        simple<InstanceType<C>>(ctor.name || "instance", (v) => v instanceof (ctor as unknown as Function)),
+    string: () => STRING,
+    number: () => NUMBER,
+    boolean: () => BOOLEAN,
+    func: <F extends (...args: never[]) => unknown = (...args: unknown[]) => unknown>() => FUNCTION as unknown as Validator<F>,
+    any: <T = unknown>() => ANY as Validator<T>,
+    instanceOf: <C extends abstract new (...args: never[]) => unknown>(ctor: C): Validator<InstanceType<C>> => {
+        let validator = instanceValidators.get(ctor);
+        if (validator === undefined) {
+            validator = simple<InstanceType<C>>(ctor.name || "instance", (v) => v instanceof (ctor as unknown as Function)) as AnyValidator;
+            instanceValidators.set(ctor, validator);
+        }
+        return validator as Validator<InstanceType<C>>;
+    },
     array: <V extends AnyValidator | undefined = undefined>(item?: V) =>
-        new Validator<V extends AnyValidator ? V["__type"][] : unknown[]>("array", (v) => {
-            if (!Array.isArray(v)) {
-                return `tableau attendu, reçu ${describeValue(v)}`;
-            }
-            if (item) {
-                for (let i = 0; i < v.length; i++) {
-                    const error = item.check(v[i]);
-                    if (error) {
-                        return `[${i}] : ${error}`;
-                    }
-                }
-            }
-            return null;
-        }),
+        (item === undefined ? ARRAY : makeArray(item)) as Validator<V extends AnyValidator ? V["__type"][] : unknown[]>,
     object: <S extends Shape | undefined = undefined>(shape?: S) =>
-        new Validator<S extends Shape ? InferShape<S> : Record<string, unknown>>("object", (v) => {
-            if (v === null || typeof v !== "object" || Array.isArray(v)) {
-                return `objet attendu, reçu ${describeValue(v)}`;
-            }
-            if (shape) {
-                for (const key in shape) {
-                    const error = shape[key].check((v as Record<string, unknown>)[key]);
-                    if (error) {
-                        return `.${key} : ${error}`;
-                    }
-                }
-            }
-            return null;
-        }),
+        (shape === undefined ? OBJECT : makeObject(shape)) as Validator<S extends Shape ? InferShape<S> : Record<string, unknown>>,
     literal: <const L extends readonly (string | number | boolean | null)[]>(...values: L) =>
         new Validator<L[number]>(values.map((v) => JSON.stringify(v)).join(" | "), (v) =>
             values.includes(v as L[number]) ? null : `une des valeurs ${values.map((x) => JSON.stringify(x)).join(", ")} attendue, reçu ${describeValue(v)}`,
@@ -133,6 +121,43 @@ export const t = {
             validators.some((x) => x.check(v) === null) ? null : `${validators.map((x) => x.describe).join(" ou ")} attendu, reçu ${describeValue(v)}`,
         ),
 };
+
+function makeArray(item: AnyValidator | undefined): AnyValidator {
+    return new Validator<unknown[]>("array", (v) => {
+        if (!Array.isArray(v)) {
+            return `tableau attendu, reçu ${describeValue(v)}`;
+        }
+        if (item) {
+            for (let i = 0; i < v.length; i++) {
+                const error = item.check(v[i]);
+                if (error) {
+                    return `[${i}] : ${error}`;
+                }
+            }
+        }
+        return null;
+    }) as AnyValidator;
+}
+
+function makeObject(shape: Shape | undefined): AnyValidator {
+    return new Validator<Record<string, unknown>>("object", (v) => {
+        if (v === null || typeof v !== "object" || Array.isArray(v)) {
+            return `objet attendu, reçu ${describeValue(v)}`;
+        }
+        if (shape) {
+            for (const key in shape) {
+                const error = shape[key].check((v as Record<string, unknown>)[key]);
+                if (error) {
+                    return `.${key} : ${error}`;
+                }
+            }
+        }
+        return null;
+    }) as AnyValidator;
+}
+
+const ARRAY = makeArray(undefined);
+const OBJECT = makeObject(undefined);
 
 // --- Inférence des types -------------------------------------------------------------------------
 
@@ -180,7 +205,8 @@ export type ComponentPropsInput<C> = C extends abstract new (...args: never[]) =
 
 /**
  * Déclare (et valide en mode dev) les props du composant en cours de construction.
- * À utiliser dans un champ : `props = props({ ... })`.
+ * À utiliser dans un champ : `props = props({ ... })`. Le schéma est lu une fois par classe (celui de
+ * la première instance) : il ne doit pas dépendre de l'instance.
  */
 export function props<S extends Shape>(schema: S): PropsOf<S> {
     const ctx = getConstruction();
@@ -212,22 +238,46 @@ export function props<S extends Shape>(schema: S): PropsOf<S> {
         });
     }
 
-    const view: Record<string, unknown> = {};
-    for (const key in schema) {
-        const validator = schema[key];
-        Object.defineProperty(view, key, {
-            enumerable: true,
-            get() {
-                let value = raw[key];
-                if (value === undefined && validator.hasDefault) {
-                    value = validator.defaultValue;
-                }
-                return value;
-            },
-            set() {
-                throw new TypeError(`[trame] Les props sont en lecture seule : impossible de modifier "props.${key}".`);
-            },
-        });
+    return new Proxy(raw, handlerFor(ctx.Ctor, schema)) as unknown as PropsOf<S>;
+}
+
+/**
+ * Gestionnaire de la vue `this.props`, créé une fois par classe de composant (à partir du schéma de
+ * sa première instance) : une instance ne coûte qu'un Proxy, sans closure ni validateur propres.
+ * La vue n'expose que les clés du schéma, applique les valeurs par défaut et refuse les écritures.
+ */
+const handlers = new WeakMap<Function, ProxyHandler<Record<string, unknown>>>();
+
+function handlerFor(Ctor: Function, schema: Shape): ProxyHandler<Record<string, unknown>> {
+    let handler = handlers.get(Ctor);
+    if (handler !== undefined) {
+        return handler;
     }
-    return Object.freeze(view) as PropsOf<S>;
+    const keys = Object.keys(schema);
+    const known = new Set<PropertyKey>(keys);
+    const defaults = new Map<PropertyKey, unknown>();
+    for (const key of keys) {
+        if (schema[key].hasDefault) {
+            defaults.set(key, schema[key].defaultValue);
+        }
+    }
+    const read = (raw: Record<string, unknown>, key: PropertyKey): unknown => {
+        const value = raw[key as string];
+        return value === undefined && defaults.has(key) ? defaults.get(key) : value;
+    };
+    const fail = (key: PropertyKey): never => {
+        throw new TypeError(`[trame] Les props sont en lecture seule : impossible de modifier "props.${String(key)}".`);
+    };
+    handler = {
+        get: (raw, key) => (known.has(key) ? read(raw, key) : (Object.prototype as unknown as Record<PropertyKey, unknown>)[key]),
+        has: (_, key) => known.has(key) || key in Object.prototype,
+        ownKeys: () => keys,
+        getOwnPropertyDescriptor: (raw, key) =>
+            known.has(key) ? { value: read(raw, key), enumerable: true, configurable: true, writable: false } : undefined,
+        set: (_, key) => fail(key),
+        defineProperty: (_, key) => fail(key),
+        deleteProperty: (_, key) => fail(key),
+    };
+    handlers.set(Ctor, handler);
+    return handler;
 }

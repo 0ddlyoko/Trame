@@ -23,6 +23,8 @@ export interface ComponentClass<C extends Component = Component> {
 }
 
 interface ConstructionContext {
+    /** Classe du composant (le schéma des props est mis en cache par classe). */
+    Ctor: Function;
     props: object;
     slots: Slots | null;
     owner: Owner;
@@ -96,7 +98,7 @@ export function renderComponent<C extends Component>(
         throw new Error("[trame] Rendu d'un composant hors d'un scope");
     }
     const prev = construction;
-    construction = { props, slots, owner, name: Ctor.name || "composant" };
+    construction = { Ctor, props, slots, owner, name: Ctor.name || "composant" };
     let component: C;
     try {
         component = runWithOwner(owner, () =>
