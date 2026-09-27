@@ -118,7 +118,9 @@ Les mises à jour sont regroupées et appliquées au microtask suivant. Dans un 
 
 - **Paresseuse** : rien n'est chargé tant que la valeur n'est pas lue. Une donnée lue seulement dans un onglet fermé n'est jamais chargée.
 - **Attente avant affichage** : un composant ou un bloc qui lit une donnée pas encore chargée est préparé hors du DOM, puis inséré d'un coup quand toutes ses données sont là. La lecture n'interrompt rien : elle renvoie `undefined`, et plusieurs données partent donc en parallèle. Un template peut écrire `order.name` sans précaution.
-- **Dépendances** : ce que le fetcher lit **avant son premier `await`** est suivi. Si l'une de ces valeurs change, la donnée est rechargée et la requête précédente est annulée via `signal`.
+- **Dépendances** : si l'une change, la donnée est rechargée et la requête précédente est annulée via `signal`.
+  - Source explicite (recommandé dès que le fetcher est asynchrone) : `load(() => this.props.orderId, (id, { signal }) => fetchOrder(id, signal))`. Seul ce que lit la source est suivi ; le fetcher reçoit sa valeur et rien de ce qu'il lit n'est suivi. Si la source lit une donnée pas encore chargée, le fetcher attend qu'elle arrive.
+  - Sans source : ce que le fetcher lit **avant son premier `await`** est suivi. Une valeur lue après un `await` ne l'est pas : c'est le piège que la source explicite évite.
 - **Rechargement** : l'ancien affichage reste en place jusqu'à l'arrivée des nouvelles données. Les données relancées par un même changement basculent ensemble (transition).
 - **Écriture locale** : `this.order = autre` remplace la valeur sans lancer de requête (mise à jour optimiste).
 - **Statut** : `loading(x)`, `error(x)` et `refresh(x)` dans les templates, `loading(() => this.x)` en TypeScript. Ils observent sans déclencher de chargement. Si le composant a une **méthode** du même nom (`refresh(id)`…), c'est elle qui est appelée ; un champ non fonction (`@state accessor loading = false`) ne gêne pas la macro.

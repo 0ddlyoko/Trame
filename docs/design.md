@@ -77,7 +77,7 @@ Les enfants reçoivent leurs props sous forme de **getters**. Une liaison de l'e
   - **Au montage**, c'est la frontière de l'application : `mount()` n'est résolu qu'une fois tout inséré.
   - **Après le montage**, chaque nouveau contenu (branche de `t-if`, nouvelle ligne) a sa propre frontière. Pour un `t-if`, l'ancienne branche reste affichée ; pour une nouvelle ligne, un nœud vide tient sa place.
   - **`<Suspense>`** crée une frontière explicite, avec un contenu d'attente (`fallback`).
-- **Dépendances d'une ressource** : un effet interne (tracker) suit ce que le fetcher lit avant son premier `await`. Si ces valeurs changent :
+- **Dépendances d'une ressource** : un effet interne (tracker) suit ce que lit la source (`load(source, fetcher)`, le fetcher étant alors exécuté sans suivi), ou, sans source, ce que le fetcher lit avant son premier `await`. Si ces valeurs changent :
   - la ressource est relancée tout de suite si elle est observée ;
   - sinon, elle est marquée périmée et rechargée à la prochaine lecture.
 - **Transitions** : les ressources relancées dans un même tick forment un groupe. Leurs valeurs sont retenues jusqu'à ce que tout le groupe soit arrivé, puis appliquées ensemble.

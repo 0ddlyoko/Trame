@@ -4,9 +4,11 @@
  * - Paresseuses : rien n'est chargé tant que la valeur n'est pas lue.
  * - Une lecture pendant le premier chargement renvoie `undefined` sans interrompre l'exécution,
  *   et signale la ressource « en attente » à la frontière (Boundary) du lecteur : l'affichage attend.
- * - Les dépendances lues dans la partie synchrone du fetcher (avant le premier `await`) sont suivies :
- *   si elles changent, la ressource est relancée (immédiatement si elle est observée, sinon à la
- *   prochaine lecture). La requête précédente est annulée via AbortSignal.
+ * - Dépendances : avec une source explicite (`load(source, fetcher)`), seules les valeurs lues par la
+ *   source sont suivies, et le fetcher reçoit sa valeur. Sans source, ce que le fetcher lit dans sa
+ *   partie synchrone (avant le premier `await`) est suivi. Si une dépendance change, la ressource est
+ *   relancée (immédiatement si elle est observée, sinon à la prochaine lecture). La requête
+ *   précédente est annulée via AbortSignal.
  * - Pendant un rechargement, l'ancienne valeur reste visible. Les ressources relancées par le même
  *   changement forment une transition : leurs nouvelles valeurs sont appliquées ensemble.
  * - Une requête lancée va jusqu'au bout même si plus personne ne lit la valeur. Elle n'est annulée
@@ -38,6 +40,9 @@ export interface ResourceContext {
 }
 
 export type Fetcher<T> = (ctx: ResourceContext) => Promise<T> | T;
+
+/** Fetcher d'une ressource à source explicite : reçoit la valeur de la source. */
+export type SourcedFetcher<S, T> = (value: S, ctx: ResourceContext) => Promise<T> | T;
 
 export interface ResourceOptions {
     /** Charge dès la création au lieu d'attendre la première lecture. */
@@ -156,10 +161,14 @@ export class Resource<T> implements PendingSource {
     private transition: Transition | null = null;
     private disposed = false;
 
+    constructor(fetcher: Fetcher<T>, owner: Owner | null, options?: ResourceOptions);
+    /** Source explicite des dépendances : `fetcher` reçoit sa valeur et n'est pas suivi. */
+    constructor(fetcher: SourcedFetcher<never, T>, owner: Owner | null, options: ResourceOptions, source: () => unknown);
     constructor(
-        private readonly fetcher: Fetcher<T>,
+        private readonly fetcher: Fetcher<T> | SourcedFetcher<never, T>,
         private readonly owner: Owner | null,
         private readonly options: ResourceOptions = {},
+        private readonly source: (() => unknown) | null = null,
     ) {
         owner?.onCleanup(() => this.dispose());
         if (options.eager) {
@@ -263,8 +272,19 @@ export class Resource<T> implements PendingSource {
         this.errorSig.set(undefined);
 
         let result: Promise<T> | T;
+        const ctx: ResourceContext = { signal: controller.signal };
         try {
-            result = this.fetcher({ signal: controller.signal });
+            if (this.source !== null) {
+                const value = this.source();
+                if (tracker.hasPendingReads()) {
+                    // La source lit une donnée pas encore chargée : on réessaiera à son arrivée.
+                    return;
+                }
+                const fetcher = this.fetcher as unknown as SourcedFetcher<unknown, T>;
+                result = untrack(() => fetcher(value, ctx));
+            } else {
+                result = (this.fetcher as Fetcher<T>)(ctx);
+            }
         } catch (e) {
             if (tracker.hasPendingReads()) {
                 // Une dépendance asynchrone n'est pas encore là : on réessaiera à son arrivée.

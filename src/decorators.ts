@@ -16,7 +16,7 @@
 import { initPatches } from "./patch";
 import { Computed, Effect, PRIORITY_USER, scheduleMicrotask, Signal, untrack } from "./reactivity/core";
 import { AmbiguousService, getOwner, Owner, runWithOwner } from "./reactivity/owner";
-import { type Fetcher, Resource, type ResourceOptions } from "./reactivity/resource";
+import { type Fetcher, Resource, type ResourceOptions, type SourcedFetcher } from "./reactivity/resource";
 import { reactive } from "./reactivity/store";
 
 const STATE = Symbol("trame.state");
@@ -114,18 +114,31 @@ export function computed<This extends object, V>(
 
 class Loader<T> {
     constructor(
-        readonly fetcher: Fetcher<T>,
+        readonly fetcher: Fetcher<T> | SourcedFetcher<never, T>,
         readonly options: ResourceOptions,
+        readonly source: (() => unknown) | null,
     ) {}
 }
 
 /**
- * Déclare le chargeur d'une @resource. Le type renvoyé est celui de la donnée :
+ * Déclare le chargeur d'une @resource. Le type renvoyé est celui de la donnée.
+ *
+ * Avec une source explicite, seules les valeurs lues par la source sont suivies, et le fetcher reçoit
+ * sa valeur (rien de ce qu'il lit n'est suivi, même après un `await`) :
+ *   @resource accessor order = load(() => this.props.orderId, (id, { signal }) => fetchOrder(id, signal));
+ *
+ * Sans source, ce que le fetcher lit avant son premier `await` est suivi :
  *   @resource accessor order = load(({ signal }) => fetchOrder(this.props.orderId, signal));
- * Les dépendances lues avant le premier `await` sont suivies : si elles changent, la donnée est rechargée.
+ *
+ * Si une dépendance change, la donnée est rechargée.
  */
-export function load<T>(fetcher: Fetcher<T>, options: ResourceOptions = {}): T {
-    return new Loader(fetcher, options) as unknown as T;
+export function load<T>(fetcher: Fetcher<T>, options?: ResourceOptions): T;
+export function load<S, T>(source: () => S, fetcher: SourcedFetcher<S, T>, options?: ResourceOptions): T;
+export function load(first: unknown, second?: unknown, third?: unknown): unknown {
+    if (typeof second === "function") {
+        return new Loader(second as SourcedFetcher<unknown, unknown>, (third as ResourceOptions | undefined) ?? {}, first as () => unknown);
+    }
+    return new Loader(first as Fetcher<unknown>, (second as ResourceOptions | undefined) ?? {}, null);
 }
 
 /** Donnée asynchrone, chargée à la première lecture. */
@@ -141,7 +154,11 @@ export function resource<This extends object, V>(
                 throw new Error(`[trame] @resource "${String(key)}" : initialisez-la avec load(...)`);
             }
             const loader = value as unknown as Loader<V>;
-            storage<Resource<V>>(this, RESOURCES).set(key, new Resource(loader.fetcher, getOwner(), loader.options));
+            const res =
+                loader.source === null
+                    ? new Resource(loader.fetcher as Fetcher<V>, getOwner(), loader.options)
+                    : new Resource(loader.fetcher as SourcedFetcher<never, V>, getOwner(), loader.options, loader.source);
+            storage<Resource<V>>(this, RESOURCES).set(key, res);
             return undefined as V;
         },
         get(this: This): V {

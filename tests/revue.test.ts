@@ -461,3 +461,104 @@ describe("services : règles de fourniture", () => {
         await expect(mount(Consumer, document.createElement("div"), { provide: [A, B] })).rejects.toThrow(/circulaire.*A → B → A/);
     });
 });
+
+describe("load(source, fetcher) : dépendances explicites", () => {
+    test("seule la source est suivie ; sa valeur est passée au fetcher", async () => {
+        const calls: string[] = [];
+        class C extends Component {
+            static template = xml`<p>{{ data }}</p>`;
+            @state accessor id = 1;
+            @state accessor filter = "a";
+            @resource accessor data = load(
+                () => this.id,
+                async (id) => {
+                    // Lu dans le fetcher (avant et après un await) : pas une dépendance.
+                    const f = this.filter;
+                    await Promise.resolve();
+                    calls.push(`${id}/${f}/${this.filter}`);
+                    return `r${id}`;
+                },
+            );
+        }
+        const { component, html } = await render(C);
+        expect(html()).toBe("<p>r1</p>");
+        component.filter = "b";
+        await settle();
+        expect(calls).toEqual(["1/a/a"]);
+        component.id = 2;
+        await settle();
+        expect(html()).toBe("<p>r2</p>");
+        expect(calls).toEqual(["1/a/a", "2/b/b"]);
+    });
+
+    test("la valeur utilisée après un await est celle de la source (pas de requête oubliée)", async () => {
+        const seen: number[] = [];
+        class C extends Component {
+            static template = xml`<p>{{ data }}</p>`;
+            @state accessor page = 1;
+            @resource accessor data = load(
+                () => this.page,
+                async (page) => {
+                    await Promise.resolve();
+                    seen.push(page);
+                    return page * 10;
+                },
+            );
+        }
+        const { component, html } = await render(C);
+        component.page = 3;
+        await settle();
+        expect(html()).toBe("<p>30</p>");
+        expect(seen).toEqual([1, 3]);
+    });
+
+    test("une source qui lit une donnée pas encore chargée attend avant d'appeler le fetcher", async () => {
+        const fetched: number[] = [];
+        let resolveOrder!: (v: { partnerId: number }) => void;
+        class C extends Component {
+            static template = xml`<p>{{ partner }}</p>`;
+            @resource accessor order = load(() => new Promise<{ partnerId: number }>((r) => (resolveOrder = r)));
+            @resource accessor partner = load(
+                () => this.order.partnerId,
+                (id) => {
+                    fetched.push(id);
+                    return `partenaire ${id}`;
+                },
+            );
+        }
+        const fixture = document.createElement("div");
+        const mounted = mount(C, fixture);
+        await settle();
+        expect(fetched).toEqual([]);
+        resolveOrder({ partnerId: 7 });
+        const root = await mounted;
+        expect(fixture.innerHTML).toBe("<p>partenaire 7</p>");
+        expect(fetched).toEqual([7]);
+        root.destroy();
+    });
+
+    test("le signal d'annulation est transmis au fetcher", async () => {
+        const aborted: number[] = [];
+        class C extends Component {
+            static template = xml`<p>{{ data }}</p>`;
+            @state accessor id = 1;
+            @resource accessor data = load(
+                () => this.id,
+                (id, { signal }) =>
+                    new Promise<string>((resolve) => {
+                        signal.addEventListener("abort", () => aborted.push(id));
+                        if (id === 1) {
+                            resolve("un");
+                        }
+                    }),
+            );
+        }
+        const { component, destroy } = await render(C);
+        component.id = 2;
+        await settle();
+        component.id = 3;
+        await settle();
+        destroy();
+        expect(aborted).toEqual([2, 3]);
+    });
+});
