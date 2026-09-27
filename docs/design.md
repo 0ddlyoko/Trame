@@ -50,6 +50,7 @@ src/
 
 - **Écriture** : les observateurs directs passent à DIRTY, les suivants à CHECK, et les effets touchés sont mis en file.
 - **Lecture** : un nœud CHECK vérifie ses sources (numéros de version) avant de décider s'il se recalcule. Un computed dont la valeur ne change pas arrête la propagation.
+- **Structure** : chaque dépendance est un lien (une allocation), chaîné dans la liste des sources du calcul (ordre de lecture) et dans la liste doublement chaînée des observateurs de la source (désabonnement en O(1)). Pendant une exécution, chaque source pointe vers le lien du calcul en cours : une relecture réutilise le lien de l'exécution précédente et une lecture en double est ignorée, sans `Map` ni `Set`. Une exécution qui relit les mêmes sources n'alloue rien.
 - **Nœuds vivants et nœuds froids.** Les effets et les computed observés sont abonnés à leurs sources. Un computed non observé n'est abonné à rien : il se revalide à la lecture grâce aux versions, et reste donc collectable par le GC.
 - **File d'effets** : tas binaire trié par priorité (ressources, puis rendu, puis effets utilisateur), puis par profondeur de scope (parents d'abord), puis par ordre de création. Un `t-if` qui bascule détruit ses enfants avant qu'ils ne s'exécutent avec un état incohérent.
 - **Moments d'exécution** :

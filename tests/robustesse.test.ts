@@ -78,13 +78,13 @@ describe("absence de fuites : les abonnements disparaissent avec les composants"
             }
         }
         const { component } = await render(C);
-        const initial = external.observers!.size;
+        const initial = external.observerCount;
         for (let i = 0; i < 50; i++) {
             component.show = !component.show;
             await nextTick();
         }
         expect(component.show).toBe(true);
-        expect(external.observers!.size).toBe(initial);
+        expect(external.observerCount).toBe(initial);
     });
 });
 

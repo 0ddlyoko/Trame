@@ -440,13 +440,10 @@ function collectResources(fn: () => unknown): Resource<unknown>[] {
         observing--;
         setRecomputeListener(prevListener);
     }
-    const sources = peek.sources!;
     const outer = getCurrentObserver();
     if (outer !== null) {
         // Le lecteur doit être réévalué si l'expression observée change.
-        for (const source of sources.keys()) {
-            outer.addSource(source);
-        }
+        peek.forEachSource((source) => outer.addSource(source));
     }
     const found: Resource<unknown>[] = [];
     const seen = new Set<ReactiveNode>();
@@ -457,15 +454,11 @@ function collectResources(fn: () => unknown): Resource<unknown>[] {
         seen.add(node);
         if (node instanceof ResourceSignal) {
             found.push(node.resource);
-        } else if (node instanceof Computed && node.sources !== null) {
-            for (const source of node.sources.keys()) {
-                walk(source);
-            }
+        } else if (node instanceof Computed) {
+            node.forEachSource(walk);
         }
     };
-    for (const source of sources.keys()) {
-        walk(source);
-    }
+    peek.forEachSource(walk);
     for (const c of recomputed) {
         c.invalidate();
     }

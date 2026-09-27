@@ -55,13 +55,49 @@ export function untrack<T>(fn: () => T): T {
     }
 }
 
+// --- Liens de dépendance ------------------------------------------------------------------------
+
+/**
+ * Une dépendance entre une source et un calcul : une seule allocation par dépendance, réutilisée
+ * d'une exécution à l'autre tant que la source est relue.
+ * - Liste des sources du calcul (simplement chaînée, dans l'ordre de lecture) : `nextSource`.
+ * - Liste des observateurs de la source (doublement chaînée, seulement si le calcul est vivant) :
+ *   `prevObserver` / `nextObserver`. Le désabonnement se fait en O(1).
+ */
+class Link {
+    /** Version de la source vue à la dernière lecture ; -1 : pas encore relue pendant l'exécution en cours. */
+    version: number;
+    nextSource: Link | null = null;
+    /** Liste des sources en construction pendant l'exécution. */
+    nextTracked: Link | null = null;
+    prevObserver: Link | null = null;
+    nextObserver: Link | null = null;
+    /** Lien courant précédent de la source (exécutions imbriquées), restauré en fin d'exécution. */
+    rollback: Link | undefined = undefined;
+    /** Créé pendant l'exécution en cours : à abonner à la fin si le calcul est vivant. */
+    fresh = true;
+
+    constructor(
+        readonly source: ReactiveNode,
+        readonly observer: Computation,
+    ) {
+        this.version = source.version;
+    }
+}
+
 // --- Sources -------------------------------------------------------------------------------------
 
 export abstract class ReactiveNode {
     /** Incrémentée à chaque changement de valeur. */
     version = 0;
-    /** Observateurs vivants. */
-    observers: Set<Computation> | null = null;
+    /** Observateurs vivants (liste doublement chaînée de liens). */
+    private observersHead: Link | null = null;
+    private observersTail: Link | null = null;
+    /**
+     * Pendant l'exécution d'un calcul qui lit ce nœud : son lien vers ce calcul. Permet de réutiliser
+     * le lien de l'exécution précédente et d'ignorer les lectures en double, sans structure auxiliaire.
+     */
+    currentLink: Link | undefined = undefined;
 
     protected track(): void {
         const obs = currentObserver;
@@ -70,22 +106,61 @@ export abstract class ReactiveNode {
         }
     }
 
-    addObserver(obs: Computation): void {
-        (this.observers ??= new Set()).add(obs);
+    /** Abonne un lien (calcul vivant) à ce nœud. */
+    linkObserver(link: Link): void {
+        link.prevObserver = this.observersTail;
+        link.nextObserver = null;
+        if (this.observersTail !== null) {
+            this.observersTail.nextObserver = link;
+        } else {
+            this.observersHead = link;
+        }
+        this.observersTail = link;
     }
 
-    removeObserver(obs: Computation): void {
-        const observers = this.observers;
-        if (observers !== null) {
-            observers.delete(obs);
-            if (observers.size === 0) {
-                this.onUnobserved();
-            }
+    /** Désabonne un lien ; prévient le nœud s'il n'a plus d'observateur. */
+    unlinkObserver(link: Link): void {
+        const { prevObserver, nextObserver } = link;
+        if (prevObserver === null && this.observersHead !== link) {
+            return; // déjà désabonné
+        }
+        if (prevObserver !== null) {
+            prevObserver.nextObserver = nextObserver;
+        } else {
+            this.observersHead = nextObserver;
+        }
+        if (nextObserver !== null) {
+            nextObserver.prevObserver = prevObserver;
+        } else {
+            this.observersTail = prevObserver;
+        }
+        link.prevObserver = null;
+        link.nextObserver = null;
+        if (this.observersHead === null) {
+            this.onUnobserved();
         }
     }
 
     get observed(): boolean {
-        return this.observers !== null && this.observers.size > 0;
+        return this.observersHead !== null;
+    }
+
+    /** Nombre d'observateurs vivants (diagnostic, tests). */
+    get observerCount(): number {
+        let count = 0;
+        for (let link = this.observersHead; link !== null; link = link.nextObserver) {
+            count++;
+        }
+        return count;
+    }
+
+    /** Marque tous les observateurs vivants. */
+    protected markObservers(state: number): void {
+        for (let link = this.observersHead; link !== null; ) {
+            const next = link.nextObserver;
+            link.observer.mark(state);
+            link = next;
+        }
     }
 
     /** Appelé quand le dernier observateur vivant disparaît. */
@@ -98,13 +173,10 @@ export abstract class ReactiveNode {
     protected notify(): void {
         this.version++;
         globalVersion++;
-        const observers = this.observers;
-        if (observers !== null) {
+        if (this.observersHead !== null) {
             batchDepth++;
             try {
-                for (const obs of observers) {
-                    obs.mark(DIRTY);
-                }
+                this.markObservers(DIRTY);
             } finally {
                 batchDepth--;
             }
@@ -152,10 +224,14 @@ export class Signal<T> extends ReactiveNode {
 
 export abstract class Computation extends ReactiveNode {
     state = DIRTY;
-    /** Sources lues lors de la dernière exécution, avec la version vue. */
-    sources: Map<ReactiveNode, number> | null = null;
-    /** Sources en cours de collecte pendant l'exécution. */
-    private collecting: Map<ReactiveNode, number> | null = null;
+    /** Sources lues lors de la dernière exécution (liste de liens, dans l'ordre de lecture). */
+    private sourcesHead: Link | null = null;
+    /** Exécuté au moins une fois (ses sources sont connues) ? */
+    protected tracked = false;
+    /** Exécution en cours : liste des sources en construction. */
+    private tracking = false;
+    private trackedHead: Link | null = null;
+    private trackedTail: Link | null = null;
     /** Ressources en attente lues (directement ou via un computed) lors de la dernière exécution. */
     pending: Set<PendingSource> | null = null;
     private collectingPending: Set<PendingSource> | null = null;
@@ -164,14 +240,30 @@ export abstract class Computation extends ReactiveNode {
     disposed = false;
 
     addSource(source: ReactiveNode): void {
-        const collecting = this.collecting;
-        if (collecting !== null && !collecting.has(source)) {
-            if (source instanceof Computed && source.pending !== null) {
-                for (const p of source.pending) {
-                    this.addPending(p);
-                }
+        if (!this.tracking) {
+            return;
+        }
+        let link = source.currentLink;
+        if (link !== undefined && link.observer === this) {
+            if (link.version !== -1 || link.fresh) {
+                return; // déjà lue pendant cette exécution
             }
-            collecting.set(source, source.version);
+            link.version = source.version; // relue : le lien est réutilisé
+        } else {
+            link = new Link(source, this);
+            link.rollback = source.currentLink;
+            source.currentLink = link;
+        }
+        if (this.trackedTail !== null) {
+            this.trackedTail.nextTracked = link;
+        } else {
+            this.trackedHead = link;
+        }
+        this.trackedTail = link;
+        if (source instanceof Computed && source.pending !== null) {
+            for (const p of source.pending) {
+                this.addPending(p);
+            }
         }
     }
 
@@ -182,6 +274,13 @@ export abstract class Computation extends ReactiveNode {
     /** Pendant l'exécution : une ressource en attente a-t-elle été lue ? */
     hasPendingReads(): boolean {
         return this.collectingPending !== null && this.collectingPending.size > 0;
+    }
+
+    /** Parcourt les sources lues lors de la dernière exécution. */
+    forEachSource(fn: (source: ReactiveNode) => void): void {
+        for (let link = this.sourcesHead; link !== null; link = link.nextSource) {
+            fn(link.source);
+        }
     }
 
     /** Hors exécution : faut-il réexécuter (une source a-t-elle vraiment changé) ? */
@@ -199,52 +298,83 @@ export abstract class Computation extends ReactiveNode {
     /** Exécute `fn` en collectant les dépendances, puis met à jour les abonnements. */
     runTracked<R>(fn: () => R): R {
         const prevObserver = currentObserver;
-        const prevCollecting = this.collecting;
+        if (this.tracking) {
+            // Réentrance (rare) : les lectures s'ajoutent à l'exécution en cours.
+            currentObserver = this;
+            try {
+                return fn();
+            } finally {
+                currentObserver = prevObserver;
+            }
+        }
         const prevPending = this.collectingPending;
-        this.collecting = new Map();
         this.collectingPending = null;
+        // Les liens de l'exécution précédente deviennent « courants » : une relecture les réutilise.
+        for (let link = this.sourcesHead; link !== null; link = link.nextSource) {
+            link.rollback = link.source.currentLink;
+            link.source.currentLink = link;
+            link.version = -1;
+        }
+        this.tracking = true;
+        this.trackedHead = null;
+        this.trackedTail = null;
         currentObserver = this;
         try {
             return fn();
         } finally {
             currentObserver = prevObserver;
-            const newSources = this.collecting!;
+            this.tracking = false;
             this.pending = this.collectingPending;
-            this.collecting = prevCollecting;
             this.collectingPending = prevPending;
-            this.swapSources(newSources);
+            this.commitSources();
         }
     }
 
-    private swapSources(newSources: Map<ReactiveNode, number>): void {
-        const old = this.sources;
-        this.sources = newSources;
-        if (!this.live) {
-            return;
+    /** Fin d'exécution : abandonne les sources non relues, abonne les nouvelles. */
+    private commitSources(): void {
+        const live = this.live;
+        for (let link = this.sourcesHead; link !== null; link = link.nextSource) {
+            link.source.currentLink = link.rollback;
+            link.rollback = undefined;
+            if (link.version === -1 && live) {
+                link.source.unlinkObserver(link);
+            }
         }
-        if (old !== null) {
-            for (const source of old.keys()) {
-                if (!newSources.has(source)) {
-                    source.removeObserver(this);
+        for (let link = this.trackedHead; link !== null; ) {
+            const next: Link | null = link.nextTracked;
+            if (link.fresh) {
+                link.source.currentLink = link.rollback;
+                link.rollback = undefined;
+                link.fresh = false;
+                if (live) {
+                    subscribe(link);
                 }
             }
+            link.nextSource = next;
+            link.nextTracked = null;
+            link = next;
         }
-        for (const source of newSources.keys()) {
-            if (old === null || !old.has(source)) {
-                subscribe(source, this);
-            }
+        this.sourcesHead = this.trackedHead;
+        this.trackedHead = null;
+        this.trackedTail = null;
+        this.tracked = true;
+    }
+
+    /** Abonne toutes les sources (passage à l'état vivant). */
+    protected subscribeAll(): void {
+        for (let link = this.sourcesHead; link !== null; link = link.nextSource) {
+            subscribe(link);
         }
     }
 
     /** Vérifie si une source a changé depuis la dernière exécution. */
     protected sourcesChanged(): boolean {
-        const sources = this.sources;
-        if (sources === null) {
+        if (!this.tracked) {
             return true;
         }
-        for (const [source, version] of sources) {
-            source.updateIfNeeded();
-            if (source.version !== version) {
+        for (let link = this.sourcesHead; link !== null; link = link.nextSource) {
+            link.source.updateIfNeeded();
+            if (link.source.version !== link.version) {
                 return true;
             }
         }
@@ -254,18 +384,18 @@ export abstract class Computation extends ReactiveNode {
     abstract mark(state: number): void;
 
     protected unsubscribeAll(): void {
-        const sources = this.sources;
-        if (sources !== null && this.live) {
-            for (const source of sources.keys()) {
-                source.removeObserver(this);
+        if (this.live) {
+            this.live = false;
+            for (let link = this.sourcesHead; link !== null; link = link.nextSource) {
+                link.source.unlinkObserver(link);
             }
         }
-        this.live = false;
     }
 }
 
-function subscribe(source: ReactiveNode, obs: Computation): void {
-    source.addObserver(obs);
+function subscribe(link: Link): void {
+    const source = link.source;
+    source.linkObserver(link);
     if (source instanceof Computed && !source.live) {
         source.goLive();
     }
@@ -343,7 +473,7 @@ export class Computed<T> extends Computation {
             if (this.lastGlobalVersion === globalVersion) {
                 return;
             }
-            if (this.sources !== null && !this.sourcesChanged()) {
+            if (this.tracked && !this.sourcesChanged()) {
                 this.lastGlobalVersion = globalVersion;
                 return;
             }
@@ -393,10 +523,8 @@ export class Computed<T> extends Computation {
         if (this.state < state) {
             const wasClean = this.state === CLEAN;
             this.state = state;
-            if (wasClean && this.observers !== null) {
-                for (const obs of this.observers) {
-                    obs.mark(CHECK);
-                }
+            if (wasClean) {
+                this.markObservers(CHECK);
             }
         }
     }
@@ -404,17 +532,13 @@ export class Computed<T> extends Computation {
     goLive(): void {
         // On valide d'abord le cache (mode froid), pour partir d'un état propre. Un computed invalidé
         // (calculé en mode observation) ne se recalcule pas ici : il le fera à sa prochaine vraie lecture.
-        if (this.sources !== null && !this.forced) {
+        if (this.tracked && !this.forced) {
             this.updateIfNeeded();
         }
         this.live = true;
         // CLEAN même si forcé : un changement de source doit encore être propagé aux observateurs.
-        this.state = this.sources === null ? DIRTY : CLEAN;
-        if (this.sources !== null) {
-            for (const source of this.sources.keys()) {
-                subscribe(source, this);
-            }
-        }
+        this.state = this.tracked ? CLEAN : DIRTY;
+        this.subscribeAll();
     }
 
     protected override onUnobserved(): void {
