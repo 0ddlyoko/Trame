@@ -1,6 +1,6 @@
 // Non-régression : points soulevés par la revue de code (un bloc describe par point).
 import { describe, expect, test } from "vitest";
-import { Component, props, state, t, xml } from "../src/index";
+import { Component, extendTemplate, inheritTemplate, props, state, t, xml } from "../src/index";
 import { render, settle } from "./helpers";
 
 describe("gestionnaires d'événements : erreurs asynchrones", () => {
@@ -121,5 +121,26 @@ describe("expressions : vrai parseur (portées JavaScript)", () => {
             static template = xml`<div>{{ a + }}</div>`;
         }
         await expect(render(C)).rejects.toThrow(/template "C".*a \+/s);
+    });
+});
+
+describe("héritage de templates : une extension de la base atteint les dérivés déjà compilés", () => {
+    test("inheritTemplate, sur deux niveaux", async () => {
+        class Base extends Component {
+            static template = xml`<div><h1>base</h1></div>`;
+        }
+        class Derived extends Component {
+            static template = inheritTemplate(Base, `<xpath expr="//h1" position="after"><p>dérivé</p></xpath>`);
+        }
+        class Derived2 extends Component {
+            static template = inheritTemplate(Derived, `<xpath expr="//p" position="after"><span>2</span></xpath>`);
+        }
+        expect((await render(Derived)).html()).toBe("<div><h1>base</h1><p>dérivé</p></div>");
+        expect((await render(Derived2)).html()).toBe("<div><h1>base</h1><p>dérivé</p><span>2</span></div>");
+
+        extendTemplate(Base, `<xpath expr="//h1" position="before"><i>ext</i></xpath>`);
+        expect((await render(Base)).html()).toBe("<div><i>ext</i><h1>base</h1></div>");
+        expect((await render(Derived)).html()).toBe("<div><i>ext</i><h1>base</h1><p>dérivé</p></div>");
+        expect((await render(Derived2)).html()).toBe("<div><i>ext</i><h1>base</h1><p>dérivé</p><span>2</span></div>");
     });
 });

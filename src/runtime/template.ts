@@ -59,30 +59,37 @@ export class Template {
     private precompiled: CompiledTemplate | null = null;
     /** Arbre fourni par un fichier de templates (registerTemplates). */
     loader: (() => XNode[]) | null = null;
+    /** Templates dérivés (inheritTemplate) : ils doivent être recompilés quand celui-ci change. */
+    private readonly derived = new Set<Template>();
 
     constructor(
         readonly source: string,
         public name: string = `template_${++anonymousCount}`,
         readonly base: Template | null = null,
-    ) {}
+    ) {
+        base?.derived.add(this);
+    }
 
     /** Ajoute une extension (xpath) : les prochains rendus utiliseront la version étendue. */
     extend(extension: TemplateExtension): void {
         this.extensions.push(extension);
         // Une version précompilée ne contient pas cette extension : il faudra recompiler.
         this.precompiled = null;
-        this.cache.clear();
+        this.invalidate();
     }
 
-    /** Oublie la version compilée (la source ou ses extensions ont changé). */
+    /** Oublie la version compilée (la source ou ses extensions ont changé), ainsi que celle des dérivés. */
     invalidate(): void {
         this.cache.clear();
+        for (const template of this.derived) {
+            template.invalidate();
+        }
     }
 
     /** Fonctions de rendu reçues déjà compilées. */
     setCompiled(compiled: CompiledTemplate): void {
         this.precompiled = compiled;
-        this.cache.clear();
+        this.invalidate();
     }
 
     /** Arbre XML final (base + extensions). Nécessite le compilateur. */
