@@ -1,4 +1,5 @@
 import { transform } from "esbuild";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { defineConfig, type Plugin } from "vitest/config";
 
@@ -26,8 +27,12 @@ function standardDecorators(): Plugin {
     };
 }
 
+const { version } = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")) as { version: string };
+
 export default defineConfig({
     plugins: [standardDecorators()],
+    // Comme au build (scripts/build.mjs) : Trame.VERSION vient de package.json.
+    define: { __TRAME_VERSION__: JSON.stringify(version) },
     resolve: {
         alias: {
             trame: fileURLToPath(new URL("./src/index.ts", import.meta.url)),

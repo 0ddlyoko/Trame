@@ -232,7 +232,9 @@ class ErrorHandlerRegion extends Region {
  * construction, chargement) ne passent pas par lui : elles vont à <ErrorBoundary>.
  */
 export class ErrorHandler extends Component {
-    static customRender = (component: ErrorHandler, slots: Slots | null): Root[] => [new ErrorHandlerRegion(detachedAnchor(), component, slots)];
+    // Paramètre typé Component (et non ErrorHandler) : la classe reste un ComponentClass ordinaire,
+    // déclarable dans `static components` comme les autres.
+    static customRender = (component: Component, slots: Slots | null): Root[] => [new ErrorHandlerRegion(detachedAnchor(), component as ErrorHandler, slots)];
     props = props({ onError: t.func<(error: unknown) => void>() });
 }
 
@@ -271,5 +273,5 @@ export class Portal extends Component {
 
 builtinComponents.Suspense = Suspense as ComponentClass;
 builtinComponents.ErrorBoundary = ErrorBoundary as ComponentClass;
-builtinComponents.ErrorHandler = ErrorHandler as unknown as ComponentClass;
+builtinComponents.ErrorHandler = ErrorHandler as ComponentClass;
 builtinComponents.Portal = Portal as ComponentClass;

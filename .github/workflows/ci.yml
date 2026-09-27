@@ -29,3 +29,5 @@ jobs:
         run: npm run check:templates
       - name: Build
         run: npm run build
+      - name: Test dans Chrome (import map, script classique)
+        run: npm run smoke

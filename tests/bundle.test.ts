@@ -4,12 +4,19 @@
 // mal décodé et le script plante au chargement.
 import * as esbuild from "esbuild";
 import { describe, expect, test } from "vitest";
+import { VERSION } from "../src/index";
 
 const entries = [
     ["trame.min.js", "src/index.ts", "esm"],
     ["trame.runtime.min.js", "src/index.runtime.ts", "esm"],
     ["trame-compiler.js", "src/compiler/index.ts", "iife"],
 ] as const;
+
+describe("version", () => {
+    test("Trame.VERSION vient de package.json", () => {
+        expect(VERSION).toMatch(/^\d+\.\d+\.\d+(-[\w.]+)?$/);
+    });
+});
 
 describe("bundles distribués", () => {
     for (const [name, entry, format] of entries) {

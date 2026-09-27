@@ -1,6 +1,6 @@
 {
   "name": "trame",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Framework TypeScript réactif à base de signaux : composants, templates compilés, asynchrone, plugins.",
   "type": "module",
   "main": "dist/trame.js",
@@ -35,6 +35,7 @@
     "test:watch": "vitest",
     "example": "node scripts/example.mjs",
     "bench": "node scripts/bench.mjs",
+    "smoke": "node scripts/smoke-browser.mjs",
     "bench:chrome": "node bench/props/run.mjs",
     "bench:memory": "node bench/props/memory.mjs",
     "check:templates": "node scripts/check-templates.mjs examples"

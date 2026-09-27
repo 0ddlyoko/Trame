@@ -38,4 +38,6 @@ export { setTranslator, _t } from "./i18n";
 export { patch } from "./patch";
 export { Registry, registry, type AddOptions } from "./registry";
 
-export const VERSION = "0.1.0";
+/** Version injectée au build depuis package.json (« dev » hors build). */
+declare const __TRAME_VERSION__: string | undefined;
+export const VERSION: string = typeof __TRAME_VERSION__ === "string" ? __TRAME_VERSION__ : "dev";

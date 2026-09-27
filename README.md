@@ -46,6 +46,47 @@ Fichiers produits par `npm run build` (modules ES compatibles ES2019 : Chrome 73
 }
 ```
 
+## Utiliser Trame dans une application
+
+Trame s'embarque comme un fichier `.js` (à la manière d'OWL dans Odoo). Chaque [release GitHub](https://github.com/0ddlyoko/Trame/releases) fournit :
+
+| Fichier | Usage |
+|---|---|
+| `trame.js` / `trame.min.js` (+ `.map`) | Module ES, version complète (templates compilés dans le navigateur). Non minifié avec source map en développement, `.min.js` en production. |
+| `trame.iife.js` | La même chose en script classique : variable globale `Trame`. |
+| `trame.runtime.js` / `.min.js` | Sans compilateur de templates (templates précompilés côté serveur). |
+| `trame.d.ts` | Toutes les déclarations TypeScript en un seul fichier (`trame`, `trame/testing`, `trame/runtime`, `trame/compiler`). |
+| `testing.js` | Utilitaires de test (`trame/testing`). Il importe `trame` par son nom : l'import map doit l'associer au même fichier que l'application. |
+| `trame-check.mjs` | Vérification des templates par TypeScript, pour la CI de l'application. |
+| `trame-compiler.js`, `compiler.js` | Compilateur de templates autonome (précompilation côté serveur). |
+
+**Une seule instance.** Trame a un état global (templates nommés, registres, traducteur, planificateur des mises à jour) : le fichier doit être chargé **une fois** et partagé par tous les modules de l'application. Ne le recopiez pas dans le bundle de chaque module.
+
+**Module ES + import map** (recommandé) : chaque module écrit `import { Component } from "trame"`, le navigateur ne charge qu'une instance.
+
+```html
+<script type="importmap">
+    { "imports": { "trame": "/static/lib/trame.min.js", "trame/testing": "/static/lib/testing.js" } }
+</script>
+<script type="module" src="/static/app/main.js"></script>
+```
+
+**Script classique** : `<script src="/static/lib/trame.iife.js"></script>`, puis `const { Component, xml } = Trame;`.
+
+**Types** : placez `trame.d.ts` dans le projet et incluez-le dans la compilation, par exemple :
+
+```jsonc
+// tsconfig.json de l'application
+{
+  "compilerOptions": { "target": "ES2022", "useDefineForClassFields": true },
+  "include": ["static/app", "static/lib/trame.d.ts"]
+}
+```
+
+**Vérification des templates en CI** : `node static/lib/trame-check.mjs -p tsconfig.json` (TypeScript doit être installé dans le projet).
+
+**Mise à jour** : remplacez les fichiers par ceux d'une nouvelle release (voir [CHANGELOG.md](CHANGELOG.md) ; `Trame.VERSION` et l'en-tête de chaque fichier indiquent la version).
+
 ## Exemple
 
 ```ts

@@ -1,0 +1,56 @@
+name: Release
+
+# À chaque tag vX.Y.Z : vérifications complètes, build, puis release GitHub avec les fichiers à
+# embarquer dans une application (voir README, « Utiliser Trame dans une application »).
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Le tag correspond à la version de package.json
+        run: |
+          expected="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "$expected" ]; then
+            echo "Tag $GITHUB_REF_NAME, mais package.json indique $expected"
+            exit 1
+          fi
+      - name: Vérification TypeScript
+        run: npm run typecheck
+      - name: Tests
+        run: npm test
+      - name: Vérification des templates (trame-check)
+        run: npm run check:templates
+      - name: Build (dont dist/trame.d.ts, vérifié)
+        run: npm run build
+      - name: Test dans Chrome (import map, script classique)
+        run: npm run smoke
+      - name: Notes de version (CHANGELOG.md)
+        run: node scripts/release-notes.mjs "${GITHUB_REF_NAME#v}" > release-notes.md
+      - name: Release GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Trame $GITHUB_REF_NAME" \
+            --notes-file release-notes.md \
+            dist/trame.js dist/trame.js.map \
+            dist/trame.min.js dist/trame.min.js.map \
+            dist/trame.iife.js dist/trame.iife.js.map \
+            dist/trame.runtime.js dist/trame.runtime.js.map \
+            dist/trame.runtime.min.js dist/trame.runtime.min.js.map \
+            dist/trame-compiler.js dist/compiler.js \
+            dist/testing.js \
+            dist/trame.d.ts \
+            dist/trame-check.mjs
