@@ -10,13 +10,15 @@
 
 import { compileExpression, type ExpressionScope, isSimplePath } from "./expression";
 import { type AST, BUILTIN_COMPONENTS, parseTemplate, type Pos, type TextPart } from "./parser";
-import { parseXML } from "./xml";
+import { parseXML, type XNode } from "./xml";
 
 export interface CheckResult {
     /** Lignes du code généré (corps d'une méthode statique à insérer dans la classe). */
     lines: string[];
-    /** Pour chaque ligne générée : la ligne du template (relative, à partir de 1), si connue. */
+    /** Pour chaque ligne générée : la ligne du template (relative, à partir de 1), si le nœud vient du template lui-même. */
     templateLines: (number | undefined)[];
+    /** Pour chaque ligne générée : position complète (ligne et fichier d'origine pour un fichier de templates). */
+    positions: (Pos | undefined)[];
 }
 
 /** Déclarations utilisées par le code généré (à ajouter une fois par fichier, au niveau du module). */
@@ -69,16 +71,22 @@ const IDENT = /^[A-Za-z_$][\w$]*$/;
  * @param className  classe du composant (référencée comme type de `$c`)
  */
 export function generateCheck(source: string, className: string): CheckResult {
-    const ast = parseTemplate(parseXML(source));
+    return generateCheckFromNodes(parseXML(source), className);
+}
+
+/** Même chose à partir d'un arbre déjà résolu (fichier de templates avec ses extensions). */
+export function generateCheckFromNodes(nodes: XNode[], className: string): CheckResult {
+    const ast = parseTemplate(nodes);
     const gen = new CheckGenerator(className);
     gen.emit(`const $c = undefined as unknown as ${className};`, undefined);
     gen.node(ast, new CheckScope(null, new Map()), "");
-    return { lines: gen.lines, templateLines: gen.map };
+    return { lines: gen.lines, templateLines: gen.map, positions: gen.positions };
 }
 
 class CheckGenerator {
     readonly lines: string[] = [];
     readonly map: (number | undefined)[] = [];
+    readonly positions: (Pos | undefined)[] = [];
     private counter = 0;
     private pos: Pos | undefined;
 
@@ -89,6 +97,7 @@ class CheckGenerator {
         for (const part of code.split("\n")) {
             this.lines.push(part);
             this.map.push(line);
+            this.positions.push(pos);
         }
     }
 

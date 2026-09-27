@@ -2,6 +2,9 @@
 //   dist/trame.js          module ES (un seul fichier), compatible navigateurs récents (ES2019)
 //   dist/trame.min.js      idem, minifié
 //   dist/trame.iife.js     script classique : variable globale `Trame`
+//   dist/trame.runtime.js  sans compilateur de templates (templates précompilés), + .min.js
+//   dist/trame-compiler.js compilateur de templates autonome, script (variable globale TrameCompiler),
+//                          à embarquer côté serveur (QuickJS...) ; dist/compiler.js : même chose en module ES
 //   dist/testing.js        utilitaires de test (trame/testing), qui importent ./trame.js
 //   dist/trame-check.mjs   vérification des templates par TypeScript (npx trame-check)
 //   dist/types/            déclarations TypeScript
@@ -28,6 +31,16 @@ const common = {
 await esbuild.build({ ...common, format: "esm", outfile: `${root}dist/trame.js`, sourcemap: true });
 await esbuild.build({ ...common, format: "esm", outfile: `${root}dist/trame.min.js`, minify: true, sourcemap: true });
 await esbuild.build({ ...common, format: "iife", globalName: "Trame", outfile: `${root}dist/trame.iife.js`, sourcemap: true });
+
+// Version sans compilateur : les templates doivent être précompilés (registerCompiled).
+const runtime = { ...common, entryPoints: [`${root}src/index.runtime.ts`], format: "esm", sourcemap: true };
+await esbuild.build({ ...runtime, outfile: `${root}dist/trame.runtime.js` });
+await esbuild.build({ ...runtime, outfile: `${root}dist/trame.runtime.min.js`, minify: true });
+
+// Compilateur autonome (sans DOM), pour précompiler côté serveur.
+const compilerEntry = { ...common, entryPoints: [`${root}src/compiler/index.ts`] };
+await esbuild.build({ ...compilerEntry, format: "iife", globalName: "TrameCompiler", outfile: `${root}dist/trame-compiler.js`, minify: true });
+await esbuild.build({ ...compilerEntry, format: "esm", outfile: `${root}dist/compiler.js` });
 
 // trame/testing : Trame n'est pas recopié, il est importé depuis ./trame.js (une seule instance).
 await esbuild.build({

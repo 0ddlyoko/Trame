@@ -57,3 +57,10 @@ export class Bad extends Component {
     @state accessor name = "";
     @state accessor lines: Line[] = [];
 }
+
+// Template défini dans templates.xml, étendu par extension.xml.
+export class Named extends Component {
+    static components = { Row };
+    static template = "fixture.Named";
+    @state accessor name = "";
+}

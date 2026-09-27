@@ -15,22 +15,29 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, relative, resolve, sep } from "node:path";
-import { checkPrelude, generateCheck } from "../compiler/typecheck";
+import { TemplateLibrary } from "../compiler/files";
+import { checkPrelude, type CheckResult, generateCheck, generateCheckFromNodes } from "../compiler/typecheck";
 
 interface FoundTemplate {
     className: string;
+    /** Template inline (xml`...`) : sa source. */
     source: string;
-    /** Ligne (dans le fichier .ts) du premier caractère du template. */
+    /** Template nommé (static template = "nom"), défini dans un fichier de templates. */
+    templateName?: string;
+    /** Ligne (dans le fichier .ts) du premier caractère du template (ou de la déclaration). */
     line: number;
     /** Position de l'accolade fermante de la classe (insertion du code de vérification). */
     classEnd: number;
 }
 
 interface Mapping {
+    /** Fichier copié (clé de correspondance avec la sortie de tsc). */
     file: string;
     generatedLine: number;
-    sourceLine: number | undefined;
-    className: string;
+    /** Où signaler l'erreur (fichier .ts ou .xml, chemin relatif au projet). */
+    reportFile: string;
+    reportLine: number | undefined;
+    label: string;
 }
 
 const MAX_FILE_SIZE = 2_000_000;
@@ -117,6 +124,11 @@ export function findTemplates(code: string): { templates: FoundTemplate[]; skipp
         const bodyStart = match.index + match[0].length - 1;
         const bodyEnd = skipBraces(code, bodyStart) - 1;
         const body = code.slice(bodyStart, bodyEnd);
+        const named = /static\s+(?:override\s+)?template\s*=\s*["']([^"']+)["']/.exec(body);
+        if (named !== null) {
+            templates.push({ className, source: "", templateName: named[1], line: lineOf(code, bodyStart + named.index), classEnd: bodyEnd });
+            continue;
+        }
         const tpl = /static\s+(?:override\s+)?template\s*=\s*xml\s*`/.exec(body);
         if (tpl === null) {
             continue;
@@ -168,13 +180,13 @@ function readJson(path: string): Record<string, unknown> {
     return JSON.parse(text) as Record<string, unknown>;
 }
 
-function collectFiles(path: string, out: string[]): void {
+function collectFiles(path: string, out: string[], extension = ".ts"): void {
     if (!existsSync(path)) {
         return;
     }
     const stat = statSync(path);
     if (stat.isFile()) {
-        if (path.endsWith(".ts") && !path.endsWith(".d.ts") && stat.size < MAX_FILE_SIZE) {
+        if (path.endsWith(extension) && !path.endsWith(".d.ts") && stat.size < MAX_FILE_SIZE) {
             out.push(path);
         }
         return;
@@ -183,8 +195,28 @@ function collectFiles(path: string, out: string[]): void {
         if (entry === "node_modules" || entry === ".trame" || entry === "dist" || entry.startsWith(".")) {
             continue;
         }
-        collectFiles(join(path, entry), out);
+        collectFiles(join(path, entry), out, extension);
     }
+}
+
+/** Fichiers de templates du projet (racine <templates>), triés par chemin. */
+function loadTemplateLibrary(projectDir: string, errors: string[], cwd: string): TemplateLibrary {
+    const library = new TemplateLibrary();
+    const files: string[] = [];
+    collectFiles(projectDir, files, ".xml");
+    for (const file of files.sort()) {
+        const content = readFileSync(file, "utf8");
+        if (!/^\s*(<\?xml[^>]*\?>\s*)?(<!--[\s\S]*?-->\s*)*<templates[\s>]/.test(content)) {
+            continue;
+        }
+        const rel = relative(projectDir, file).split(sep).join("/");
+        try {
+            library.addFile(content, rel);
+        } catch (error) {
+            errors.push(`${relative(cwd, file).split(sep).join("/")} — ${(error as Error).message.replace(/^\[trame\] /, "")}`);
+        }
+    }
+    return library;
 }
 
 function parseArgs(argv: string[]): { project: string; roots: string[] } {
@@ -225,6 +257,9 @@ export function main(argv: string[]): number {
     const outDir = join(projectDir, ".trame", "check");
     rmSync(outDir, { recursive: true, force: true });
     const mappings: Mapping[] = [];
+    const directErrors: string[] = [];
+    const library = loadTemplateLibrary(projectDir, directErrors, cwd);
+    const display = (projectRelative: string) => relative(cwd, join(projectDir, projectRelative)).split(sep).join("/");
     let templateCount = 0;
     const skippedAll: string[] = [];
 
@@ -252,15 +287,22 @@ export function main(argv: string[]): number {
         let last = 0;
         const sorted = [...templates].sort((a, b) => a.classEnd - b.classEnd);
         for (const [n, tpl] of sorted.entries()) {
-            let check;
+            let check: CheckResult;
+            const label = tpl.templateName ? `template "${tpl.templateName}" (${tpl.className})` : `template "${tpl.className}"`;
             try {
-                check = generateCheck(tpl.source, tpl.className);
+                if (tpl.templateName !== undefined) {
+                    if (!library.has(tpl.templateName)) {
+                        skippedAll.push(`${rel} : ${tpl.className} utilise le template "${tpl.templateName}", introuvable dans les fichiers de templates (non vérifié)`);
+                        continue;
+                    }
+                    check = generateCheckFromNodes(library.resolve(tpl.templateName), tpl.className);
+                } else {
+                    check = generateCheck(tpl.source, tpl.className);
+                }
             } catch (error) {
                 // Erreur de syntaxe dans le template : signalée directement.
-                const shown = relative(cwd, file).split(sep).join("/");
-                console.error(`${shown}:${tpl.line} — template "${tpl.className}" : ${(error as Error).message}`);
+                directErrors.push(`${relative(cwd, file).split(sep).join("/")}:${tpl.line} — ${label} : ${(error as Error).message.replace(/^\[trame\] /, "")}`);
                 templateCount++;
-                mappings.push({ file: rel, generatedLine: -1, sourceLine: tpl.line, className: tpl.className });
                 continue;
             }
             out += code.slice(last, tpl.classEnd);
@@ -270,13 +312,20 @@ export function main(argv: string[]): number {
             let generatedLine = out.split("\n").length;
             for (let i = 0; i < check.lines.length; i++) {
                 out += check.lines[i] + "\n";
-                const templateLine = check.templateLines[i];
-                mappings.push({
-                    file: rel,
-                    generatedLine,
-                    sourceLine: templateLine === undefined ? undefined : tpl.line + templateLine - 1,
-                    className: tpl.className,
-                });
+                let reportFile = rel;
+                let reportLine: number | undefined;
+                if (tpl.templateName !== undefined) {
+                    // Nœud d'un fichier de templates (ou d'une extension) : son fichier et sa ligne.
+                    const pos = check.positions[i];
+                    if (pos?.origin !== undefined && pos.line !== undefined) {
+                        reportFile = pos.origin;
+                        reportLine = pos.line;
+                    }
+                } else {
+                    const templateLine = check.templateLines[i];
+                    reportLine = templateLine === undefined ? undefined : tpl.line + templateLine - 1;
+                }
+                mappings.push({ file: rel, generatedLine, reportFile, reportLine, label });
                 generatedLine++;
             }
             out += "}\n";
@@ -328,20 +377,19 @@ export function main(argv: string[]): number {
         while (i + 1 < lines.length && /^\s+/.test(lines[i + 1]) && lines[i + 1].trim()) {
             message += "\n    " + lines[++i].trim();
         }
-        const shown = relative(cwd, join(projectDir, mapping.file)).split(sep).join("/");
-        const where = mapping.sourceLine === undefined ? shown : `${shown}:${mapping.sourceLine}`;
-        errors.push(`${where} — template "${mapping.className}" : ${message} (${m[4]})`);
+        const shown = display(mapping.reportFile);
+        const where = mapping.reportLine === undefined ? shown : `${shown}:${mapping.reportLine}`;
+        errors.push(`${where} — ${mapping.label} : ${message} (${m[4]})`);
     }
 
-    const unique = Array.from(new Set(errors));
+    const unique = Array.from(new Set([...directErrors, ...errors]));
     for (const e of unique) {
         console.error(e);
     }
     for (const s of skippedAll) {
         console.warn(`[trame-check] ${s}`);
     }
-    const syntaxErrors = mappings.filter((m) => m.generatedLine === -1).length;
-    const total = unique.length + syntaxErrors;
+    const total = unique.length;
     console.log(`[trame-check] ${templateCount} template(s) vérifié(s), ${total} erreur(s).`);
     return total > 0 ? 1 : 0;
 }

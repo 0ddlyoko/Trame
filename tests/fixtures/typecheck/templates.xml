@@ -1,0 +1,9 @@
+<templates>
+    <t t-name="fixture.Named">
+        <div>
+            <h1>{{ name.toUpperCase() }}</h1>
+            <p>{{ nmae }}</p>
+            <Row line="name" onRemove="() => 1"/>
+        </div>
+    </t>
+</templates>

@@ -22,7 +22,16 @@ npm run build       # dist/trame.js (ESM), dist/trame.min.js, dist/trame.iife.js
 npm run example     # démo « commande » sur http://localhost:8000
 ```
 
-Le fichier à intégrer dans l'ERP est `dist/trame.js`. C'est un module ES en un seul fichier, compatible ES2019 (Chrome 73+, Firefox 67+, Safari 12.1+, Edge 79+). Les types sont dans `dist/types/`.
+Fichiers produits par `npm run build` (modules ES compatibles ES2019 : Chrome 73+, Firefox 67+, Safari 12.1+, Edge 79+) :
+
+| Fichier | Contenu |
+|---|---|
+| `dist/trame.js` (`.min.js`) | Version complète : les templates sont compilés dans le navigateur au premier affichage. |
+| `dist/trame.runtime.js` (`.min.js`) | Sans compilateur de templates (47 Ko minifié au lieu de 78 Ko) : les templates doivent être précompilés. |
+| `dist/trame-compiler.js` | Compilateur de templates autonome (variable globale `TrameCompiler`), à exécuter côté serveur (par exemple QuickJS dans le serveur Rust). `dist/compiler.js` : même chose en module ES. |
+| `dist/testing.js` | Utilitaires de test (`trame/testing`). |
+| `dist/trame-check.mjs` | Vérification des templates par TypeScript (`npx trame-check`). |
+| `dist/types/` | Déclarations TypeScript. |
 
 **Configuration TypeScript requise côté ERP.** Les décorateurs sont les décorateurs standards (TS ≥ 5) :
 
@@ -131,7 +140,8 @@ Les mises à jour sont regroupées et appliquées au microtask suivant. Dans un 
 - Pas de `this.` : `order.total` désigne le membre `order` du composant (`this.order` reste accepté). Les variables de boucle, de `t-set` et de slot sont prioritaires.
 - Les attributs d'un composant sont des **expressions** : `label="'texte'"`, `count="n + 1"`, ou `label="Commande {{ id }}"`.
 - `t-key` hors d'une boucle recrée l'élément ou le composant quand la valeur change : `<OrderForm t-key="orderId" orderId="orderId"/>` repart d'un état local propre à chaque changement de commande. Sans `t-key`, le composant est conservé et seules ses liaisons se mettent à jour. La nouvelle instance est préparée hors du DOM : l'ancienne reste affichée pendant son chargement.
-- `t-on-*` accepte un nom de méthode (`save`), une fonction fléchée (`(ev) => …`) ou une instruction (`count = 0`). Modificateurs disponibles : `.prevent`, `.stop`, `.self`, `.capture`, `.once`, `.passive`.
+- `t-on-*` accepte un nom de méthode (`save`), une fonction fléchée (`(ev) => …`) ou une instruction (`count = 0`). Modificateurs disponibles : `.prevent`, `.stop`, `.self`, `.capture`, `.once`, `.passive`, `.delegate`.
+- `.delegate` (délégation) : au lieu d'un écouteur par élément, un seul écouteur sur le document pour ce type d'événement. C'est utile pour les très grandes listes. Les gestionnaires délégués s'exécutent après les écouteurs directs, et `.stop` arrête la remontée vers les gestionnaires délégués des ancêtres. Pour les événements qui ne remontent pas (`focus`, `blur`, `mouseenter`…), Trame pose un écouteur sur l'élément, comme sans `.delegate`.
 - `value`, `checked` et `selected` sont écrits comme des propriétés. Une saisie en cours équivalente (`1.` pour `1`) n'est pas écrasée.
 - Il n'y a pas de `t-model` : on écrit `t-att-value` et `t-on-input` explicitement.
 
@@ -195,6 +205,46 @@ registry.category("fields").add("monetary", MonetaryField, { sequence: 10 });
 
 Positions disponibles : `inside`, `before`, `after`, `replace` (`$0` réinsère l'élément d'origine) et `attributes` (avec `<attribute name="class" add="x" remove="y"/>`). Le xpath supporté comprend `/a/b`, `//a`, `*`, `[n]`, `[@attr='v']`, `[hasclass('x')]`, `contains()` et `and`.
 
+## Fichiers de templates et précompilation
+
+Les templates peuvent être déclarés dans des fichiers XML, un ou plusieurs par module, plutôt qu'en `xml\`...\`` dans le code :
+
+```xml
+<templates>
+    <t t-name="sale.OrderForm">                        <!-- nouveau template -->
+        <div class="o-order">...</div>
+    </t>
+    <t t-inherit="web.Card">                            <!-- extension d'un template d'un autre module -->
+        <xpath expr="//h1" position="after"><p>...</p></xpath>
+    </t>
+    <t t-name="sale.SpecialForm" t-inherit="sale.OrderForm">   <!-- nouveau template dérivé -->
+        <xpath expr="//h1" position="replace"><h2>...</h2></xpath>
+    </t>
+</templates>
+```
+
+Les composants y font référence par nom : `static template = "sale.OrderForm";`.
+
+**Précompilation côté serveur.** Le serveur passe les fichiers des modules installés, dans l'ordre des dépendances, au compilateur autonome (`dist/trame-compiler.js`). Il reçoit un module JS prêt à servir :
+
+```js
+const js = TrameCompiler.compileTemplateFiles([
+    { path: "web/static/templates.xml", content: "..." },
+    { path: "sale/static/order.xml", content: "..." },
+]);
+// import { registerCompiled } from "trame";
+// registerCompiled("sale.OrderForm", { component: (function ($h) { ... }) });
+// ...
+```
+
+- Les extensions sont appliquées dans l'ordre des fichiers.
+- Les templates appelés par `t-call` sont aussi compilés dans ce mode.
+- Une erreur (syntaxe, cible d'extension inconnue, template défini deux fois) lève une exception qui indique le fichier et la ligne.
+
+Côté navigateur, `trame.runtime.js` suffit : il n'y a rien à compiler. En Rust, le compilateur s'exécute par exemple avec le crate `rquickjs`, en environ 0,5 ms par template.
+
+**Sans serveur** (développement, tests) : `registerTemplates(contenuXml, "sale/order.xml")` enregistre un fichier et le compile dans le navigateur (version complète).
+
 ## Traductions
 
 ```ts
@@ -244,10 +294,12 @@ Ce qui est vérifié :
 
 Fonctionnement : l'outil copie le projet dans `.trame/check/`, insère dans chaque classe du code de vérification tiré de son template, lance `tsc`, puis ramène les erreurs sur la ligne du template. Rien n'est ajouté au code livré.
 
+Les templates des fichiers XML sont aussi vérifiés. L'outil relie `static template = "sale.OrderForm"` au template du fichier, extensions comprises, et signale les erreurs dans le fichier `.xml` concerné, par exemple `sale/static/order.xml:12` ou le fichier de l'extension fautive.
+
 Non vérifiés :
 - les templates contenant `${...}` ;
-- les templates nommés (`registerTemplate`, `t-call`) ;
-- les extensions xpath et `inheritTemplate` ;
+- les templates appelés par `t-call` (seuls leurs paramètres sont vérifiés) ;
+- les extensions passées par `extendTemplate()` / `inheritTemplate()` dans le code ;
 - le contenu de la variable `t-slot-scope`, typé `any` ;
 - les champs ajoutés par `patch()`, absents du type de la classe.
 

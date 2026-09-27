@@ -258,8 +258,39 @@ export function bindStyle(el: HTMLElement | SVGElement, fn: () => unknown, loc?:
 export function bindEvent(el: Element, type: string, handler: (ev: Event) => unknown, modifiers: string, loc?: string): void {
     const kind = eventKind(type, modifiers);
     (el as unknown as Record<symbol, EventRecord>)[kind.key] = { handler, owner: getOwner(), loc };
-    el.addEventListener(type, kind.listener, kind.options);
+    if (!kind.delegated) {
+        el.addEventListener(type, kind.listener, kind.options);
+    }
 }
+
+/**
+ * Événements qui ne remontent pas l'arbre DOM : `.delegate` n'a pas de sens pour eux, un écouteur
+ * est alors posé sur l'élément (comportement normal).
+ */
+const NON_BUBBLING = new Set([
+    "focus",
+    "blur",
+    "mouseenter",
+    "mouseleave",
+    "pointerenter",
+    "pointerleave",
+    "load",
+    "unload",
+    "error",
+    "abort",
+    "scroll",
+    "scrollend",
+    "resize",
+    "toggle",
+    "invalid",
+    "play",
+    "pause",
+    "ended",
+    "volumechange",
+    "timeupdate",
+    "loadedmetadata",
+    "canplay",
+]);
 
 /** Gestionnaire posé sur un élément (rangé dans une propriété de l'élément). */
 interface EventRecord {
@@ -273,6 +304,8 @@ interface EventKind {
     key: symbol;
     listener: (this: Element, ev: Event) => void;
     options: AddEventListenerOptions | undefined;
+    /** `.delegate` : un seul écouteur sur le document, aucun sur les éléments. */
+    delegated: boolean;
 }
 
 const eventKinds = new Map<string, EventKind>();
@@ -289,6 +322,16 @@ function eventKind(type: string, modifiers: string): EventKind {
         return kind;
     }
     const mods = modifiers ? modifiers.split(",") : [];
+    if (mods.includes("delegate")) {
+        if (NON_BUBBLING.has(type) || typeof document === "undefined") {
+            // Événement qui ne remonte pas : écouteur sur l'élément, comme sans .delegate.
+            kind = eventKind(type, mods.filter((m) => m !== "delegate").join(","));
+        } else {
+            kind = delegatedKind(type, id, mods);
+        }
+        eventKinds.set(id, kind);
+        return kind;
+    }
     const prevent = mods.includes("prevent");
     const stop = mods.includes("stop");
     const self = mods.includes("self");
@@ -310,9 +353,90 @@ function eventKind(type: string, modifiers: string): EventKind {
         mods.includes("capture") || mods.includes("once") || mods.includes("passive")
             ? { capture: mods.includes("capture"), once: mods.includes("once"), passive: mods.includes("passive") }
             : undefined;
-    kind = { key, listener, options };
+    kind = { key, listener, options, delegated: false };
     eventKinds.set(id, kind);
     return kind;
+}
+
+/**
+ * Délégation (`t-on-click.delegate`) : un seul écouteur sur le document pour ce type d'événement.
+ * À chaque événement, on remonte depuis l'élément visé et on exécute les gestionnaires rencontrés.
+ * Utile pour les très grandes listes : aucun écouteur n'est posé sur chaque ligne.
+ * Particularités : ces gestionnaires s'exécutent après les écouteurs directs (l'événement doit
+ * d'abord remonter jusqu'au document), et `.stop` arrête la remontée entre gestionnaires délégués.
+ */
+function delegatedKind(type: string, id: string, mods: string[]): EventKind {
+    const capture = mods.includes("capture");
+    const passive = mods.includes("passive");
+    const key = Symbol(`trame.on.${id}`);
+    const group = delegationGroup(type, capture, passive);
+    group.kinds.push({
+        key,
+        prevent: mods.includes("prevent"),
+        stop: mods.includes("stop"),
+        self: mods.includes("self"),
+        once: mods.includes("once"),
+    });
+    return { key, listener: group.listener, options: { capture, passive }, delegated: true };
+}
+
+interface DelegatedKind {
+    key: symbol;
+    prevent: boolean;
+    stop: boolean;
+    self: boolean;
+    once: boolean;
+}
+
+interface DelegationGroup {
+    kinds: DelegatedKind[];
+    listener: (ev: Event) => void;
+}
+
+const delegationGroups = new Map<string, DelegationGroup>();
+
+/**
+ * Un seul écouteur sur le document par type d'événement (et options) : il remonte une fois depuis
+ * l'élément visé et exécute, à chaque niveau, les gestionnaires délégués trouvés, quels que soient
+ * leurs modificateurs. Ainsi `.stop` arrête bien tous les gestionnaires délégués des ancêtres.
+ */
+function delegationGroup(type: string, capture: boolean, passive: boolean): DelegationGroup {
+    const id = `${type}|${capture}|${passive}`;
+    let group = delegationGroups.get(id);
+    if (group !== undefined) {
+        return group;
+    }
+    const kinds: DelegatedKind[] = [];
+    const listener = (ev: Event): void => {
+        let node = ev.target as Node | null;
+        while (node !== null && node !== document) {
+            const holder = node as unknown as Record<symbol, EventRecord | undefined>;
+            let stopped = false;
+            for (const kind of kinds) {
+                const record = holder[kind.key];
+                if (record === undefined || (kind.self && ev.target !== node)) {
+                    continue;
+                }
+                if (kind.prevent) {
+                    ev.preventDefault();
+                }
+                if (kind.once) {
+                    delete holder[kind.key];
+                }
+                runHandler(record, ev);
+                stopped ||= kind.stop;
+            }
+            if (stopped) {
+                ev.stopPropagation();
+                return;
+            }
+            node = node.parentNode;
+        }
+    };
+    document.addEventListener(type, listener, { capture, passive });
+    group = { kinds, listener };
+    delegationGroups.set(id, group);
+    return group;
 }
 
 /**

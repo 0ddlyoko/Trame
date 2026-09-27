@@ -14,6 +14,14 @@
     "./testing": {
       "types": "./dist/types/testing.d.ts",
       "import": "./dist/testing.js"
+    },
+    "./runtime": {
+      "types": "./dist/types/index.runtime.d.ts",
+      "import": "./dist/trame.runtime.js"
+    },
+    "./compiler": {
+      "types": "./dist/types/compiler/index.d.ts",
+      "import": "./dist/compiler.js"
     }
   },
   "files": [

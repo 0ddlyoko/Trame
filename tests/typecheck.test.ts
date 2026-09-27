@@ -91,7 +91,19 @@ describe("trame-check (bout en bout avec tsc)", () => {
             expect(found, `erreur attendue ligne ${line} (${marker})`).toBeDefined();
             expect(found).toMatch(message);
         }
-        expect(errors).toHaveLength(expected.length);
+        // Template nommé défini dans un fichier XML, et extension venant d'un autre fichier :
+        // les erreurs sont signalées dans le fichier .xml concerné.
+        const xmlExpected: [string, RegExp][] = [
+            ["tests/fixtures/typecheck/templates.xml:5 — template \"fixture.Named\" (Named)", /Property 'nmae' does not exist on type 'Named'/],
+            ["tests/fixtures/typecheck/templates.xml:6 — template \"fixture.Named\" (Named)", /Type 'string' is not assignable to type 'Line'/],
+            ["tests/fixtures/typecheck/extension.xml:4 — template \"fixture.Named\" (Named)", /Property 'total' does not exist on type 'Named'/],
+        ];
+        for (const [prefix, message] of xmlExpected) {
+            const found = errors.find((e) => e.startsWith(prefix));
+            expect(found, prefix).toBeDefined();
+            expect(found).toMatch(message);
+        }
+        expect(errors).toHaveLength(expected.length + xmlExpected.length);
         expect(errors.some((e) => e.includes('template "Good"'))).toBe(false);
     }, 60000);
 });

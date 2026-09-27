@@ -1,0 +1,7 @@
+<templates>
+    <t t-inherit="fixture.Named">
+        <xpath expr="//h1" position="after">
+            <span>{{ total.toFixed(2) }}</span>
+        </xpath>
+    </t>
+</templates>

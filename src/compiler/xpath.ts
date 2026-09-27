@@ -20,24 +20,30 @@
 import { cloneNode, getAttr, parseXML, removeAttr, setAttr, type XElement, type XNode } from "./xml";
 
 export function applyExtension(nodes: XNode[], extension: string, templateName: string, origin = "extension"): void {
-    const root: XElement = { type: "element", tag: "#root", attrs: [], children: nodes, parent: null };
-    for (const node of nodes) {
-        node.parent = root;
-    }
+    applyOperations(nodes, extensionOperations(parseXML(extension, origin)), templateName);
+}
+
+/** Opérations d'une extension : les <xpath>/éléments positionnés, éventuellement regroupés dans un <t>. */
+export function extensionOperations(nodes: XNode[]): XElement[] {
     const ops: XElement[] = [];
-    for (const node of parseXML(extension, origin)) {
+    for (const node of nodes) {
         if (node.type !== "element") {
             continue;
         }
         if (node.tag === "t" && getAttr(node, "position") === undefined) {
-            for (const child of node.children) {
-                if (child.type === "element") {
-                    ops.push(child);
-                }
-            }
+            ops.push(...extensionOperations(node.children));
         } else {
             ops.push(node);
         }
+    }
+    return ops;
+}
+
+/** Applique des opérations d'extension (déjà parsées, avec leurs positions d'origine). */
+export function applyOperations(nodes: XNode[], ops: XElement[], templateName: string): void {
+    const root: XElement = { type: "element", tag: "#root", attrs: [], children: nodes, parent: null };
+    for (const node of nodes) {
+        node.parent = root;
     }
     try {
         for (const op of ops) {
