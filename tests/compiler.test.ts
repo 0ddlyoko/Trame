@@ -9,6 +9,9 @@ const scope = (locals: Record<string, string> = {}): ExpressionScope => ({
 
 const c = (src: string, locals?: Record<string, string>) => compileExpression(src, scope(locals));
 
+/** Code attendu d'un appel de macro : méthode du composant si elle existe, sinon macro. */
+const macro = (name: string, args: string) => `(typeof $c.${name} === "function" ? $c.${name}(${args}) : $h.${name}(() => (${args})))`;
+
 describe("réécriture des expressions", () => {
     test("identifiants libres → membres du composant", () => {
         expect(c("order.total")).toBe("$c.order.total");
@@ -53,10 +56,10 @@ describe("réécriture des expressions", () => {
     });
 
     test("macros loading / error / refresh", () => {
-        expect(c("loading(order)")).toBe("$h.loading(() => ($c.order))");
-        expect(c("loading(this.order)")).toBe("$h.loading(() => ($c.order))");
-        expect(c("!loading(order.partner) && x")).toBe("!$h.loading(() => ($c.order.partner)) && $c.x");
-        expect(c("loading(line)", { line: "it1.get()" })).toBe("$h.loading(() => (it1.get()))");
+        expect(c("loading(order)")).toBe(macro("loading", "$c.order"));
+        expect(c("loading(this.order)")).toBe(macro("loading", "$c.order"));
+        expect(c("!loading(order.partner) && x")).toBe(`!${macro("loading", "$c.order.partner")} && $c.x`);
+        expect(c("loading(line)", { line: "it1.get()" })).toBe(macro("loading", "it1.get()"));
         // une variable locale nommée loading reste une variable
         expect(c("loading(x)", { loading: "v1.get()" })).toBe("v1.get()($c.x)");
     });
@@ -142,7 +145,7 @@ describe("réécriture des expressions : portées JavaScript", () => {
 
     test("macros : sans argument, c'est un appel normal", () => {
         expect(c("refresh()")).toBe("$c.refresh()");
-        expect(c("(order) => loading(order)")).toBe("(order) => $h.loading(() => (order))");
+        expect(c("(order) => loading(order)")).toBe(`(order) => ${macro("loading", "order")}`);
     });
 
     test("erreurs de syntaxe claires", () => {

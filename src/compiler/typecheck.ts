@@ -32,6 +32,7 @@ export function checkPrelude(trameModule: string): string {
         `declare function __on<E>(handler: (ev: E) => unknown): void;`,
         `declare function __props<C>(component: C, props: __TramePropsInput<C>): void;`,
         `declare function __el<K extends string>(): __El<K>;`,
+        `declare function __macro<C, K extends string>(component: C, name: K, macro: () => unknown, member: (method: K extends keyof C ? (C[K] extends (...args: never[]) => unknown ? C[K] : any) : any) => unknown): any;`,
         `declare const $h: { loading(fn: () => unknown): boolean; error(fn: () => unknown): unknown; refresh(fn: () => unknown): void; markup(html: string): unknown; _t(text: string): string };`,
         `type __El<K extends string> = K extends keyof HTMLElementTagNameMap ? HTMLElementTagNameMap[K] : K extends keyof SVGElementTagNameMap ? SVGElementTagNameMap[K] : HTMLElement;`,
         `type __Ev<N extends string, E> = (N extends keyof HTMLElementEventMap ? HTMLElementEventMap[N] : Event) & { target: E; currentTarget: E };`,
@@ -60,6 +61,11 @@ class CheckScope implements ExpressionScope {
 
     free(name: string): string {
         return name === "this" ? "$c" : `$c.${name}`;
+    }
+
+    /** Méthode du composant de ce nom (vérifiée avec ses vrais paramètres), sinon macro. */
+    macro(name: string, args: string): string {
+        return `__macro($c, ${JSON.stringify(name)}, () => (${args}), (__m) => __m(${args}))`;
     }
 }
 

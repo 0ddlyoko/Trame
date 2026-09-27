@@ -244,3 +244,32 @@ describe("t-foreach sans t-key : valeurs en double acceptées", () => {
         expect(after.slice(1)).toEqual(spans.slice(0, 2));
     });
 });
+
+describe("macros loading / error / refresh et membres du composant", () => {
+    test("une méthode du composant portant le nom d'une macro l'emporte", async () => {
+        const calls: unknown[] = [];
+        class C extends Component {
+            static template = xml`<button t-on-click="refresh(42)">x</button>`;
+            refresh(id: number) {
+                calls.push(id);
+            }
+        }
+        const { fixture } = await render(C);
+        (fixture.querySelector("button") as HTMLButtonElement).click();
+        expect(calls).toEqual([42]);
+    });
+
+    test("un champ (non fonction) portant le nom d'une macro laisse la macro fonctionner", async () => {
+        let resolve!: (v: string) => void;
+        class C extends Component {
+            static template = xml`<div><p>{{ loading(data) ? "chargement" : "prêt" }}</p><i>{{ loading }}</i></div>`;
+            @state accessor loading = "champ";
+            @resource accessor data = load(() => new Promise<string>((r) => (resolve = r)), { eager: true });
+        }
+        const { html } = await render(C);
+        expect(html()).toBe("<div><p>chargement</p><i>champ</i></div>");
+        resolve("ok");
+        await settle();
+        expect(html()).toBe("<div><p>prêt</p><i>champ</i></div>");
+    });
+});

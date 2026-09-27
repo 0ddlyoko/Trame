@@ -121,7 +121,7 @@ Les mises à jour sont regroupées et appliquées au microtask suivant. Dans un 
 - **Dépendances** : ce que le fetcher lit **avant son premier `await`** est suivi. Si l'une de ces valeurs change, la donnée est rechargée et la requête précédente est annulée via `signal`.
 - **Rechargement** : l'ancien affichage reste en place jusqu'à l'arrivée des nouvelles données. Les données relancées par un même changement basculent ensemble (transition).
 - **Écriture locale** : `this.order = autre` remplace la valeur sans lancer de requête (mise à jour optimiste).
-- **Statut** : `loading(x)`, `error(x)` et `refresh(x)` dans les templates, `loading(() => this.x)` en TypeScript. Ils observent sans déclencher de chargement.
+- **Statut** : `loading(x)`, `error(x)` et `refresh(x)` dans les templates, `loading(() => this.x)` en TypeScript. Ils observent sans déclencher de chargement. Si le composant a une **méthode** du même nom (`refresh(id)`…), c'est elle qui est appelée ; un champ non fonction (`@state accessor loading = false`) ne gêne pas la macro.
 - `load(fetcher, { eager: true })` charge dès la création.
 
 ## Templates

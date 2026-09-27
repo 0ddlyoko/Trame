@@ -13,7 +13,8 @@
  * d'origine est conservé ; seuls les identifiants concernés sont remplacés.
  *
  * `loading(x)`, `error(x)` et `refresh(x)` sont des macros : l'argument est passé sous forme de
- * fonction, pour être évalué en mode observation (sans déclencher de chargement).
+ * fonction, pour être évalué en mode observation (sans déclencher de chargement). Si le composant a une
+ * méthode de ce nom, c'est elle qui est appelée (un membre du composant l'emporte toujours).
  */
 
 import { TemplateSyntaxError } from "./xml";
@@ -23,6 +24,17 @@ export interface ExpressionScope {
     resolve(name: string): string | undefined;
     /** Code JS pour un identifiant libre (membre du composant par défaut). */
     free(name: string): string;
+    /**
+     * Code d'un appel `loading(args)` / `error(args)` / `refresh(args)` dont le nom n'est pas une
+     * variable locale. Par défaut : la méthode du composant si elle existe, sinon la macro.
+     */
+    macro?(name: string, args: string): string;
+}
+
+/** Appel de macro, sauf si le membre `member` est une fonction (méthode du composant). */
+function defaultMacro(scope: ExpressionScope, name: string, args: string): string {
+    const member = scope.free(name);
+    return `(typeof ${member} === "function" ? ${member}(${args}) : $h.${name}(() => (${args})))`;
 }
 
 // --- Tokenizer -----------------------------------------------------------------------------------
@@ -1301,11 +1313,14 @@ export function compileExpression(src: string, scope: ExpressionScope): string {
         }
         const local = scope.resolve(name);
         if (local === undefined && ref.call !== null) {
-            // Macro : loading(x) → $h.loading(() => (x))
+            // Macro : loading(x) → $h.loading(() => (x)), sauf méthode du composant de ce nom.
             const { list, open, close } = ref.call;
             edits.set(ref.token, {
                 to: close,
-                render: () => `$h.${name}(() => (${emit(list, open.index + 1, close.index - 1)}))`,
+                render: () => {
+                    const args = emit(list, open.index + 1, close.index - 1);
+                    return scope.macro ? scope.macro(name, args) : defaultMacro(scope, name, args);
+                },
             });
             continue;
         }

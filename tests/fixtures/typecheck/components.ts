@@ -53,9 +53,26 @@ export class Bad extends Component {
             <Row line="lines[0]" onRemove="() => 1" extra="1"/>
             <Missing/>
             <div t-on-click="(ev) => ev.target.value"/>
+            <button t-on-click="refresh('x')">recharger</button>
         </div>`;
     @state accessor name = "";
     @state accessor lines: Line[] = [];
+    refresh(_id: number) {}
+}
+
+// Méthode et champ portant le nom d'une macro : la méthode l'emporte, le champ laisse la macro.
+export class Macros extends Component {
+    static template = xml`
+        <div>
+            <button t-on-click="refresh(1)">recharger</button>
+            <p t-if="loading(lines)">{{ loading ? "..." : "" }}</p>
+            <p>{{ error(lines) }}</p>
+        </div>`;
+    @state accessor loading = false;
+    @state accessor lines: Line[] = [];
+    refresh(id: number) {
+        return id;
+    }
 }
 
 // Template défini dans templates.xml, étendu par extension.xml.

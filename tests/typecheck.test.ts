@@ -84,6 +84,7 @@ describe("trame-check (bout en bout avec tsc)", () => {
             ['extra="1"', /'extra' does not exist/],
             ["<Missing/>", /Property 'Missing' does not exist/],
             ['<div t-on-click="(ev) => ev.target.value"/>', /Property 'value' does not exist on type 'EventTarget & HTMLDivElement'/],
+            [`<button t-on-click="refresh('x')">`, /Argument of type 'string' is not assignable to parameter of type 'number'/],
         ];
         for (const [marker, message] of expected) {
             const line = lineOf(marker);
@@ -105,5 +106,6 @@ describe("trame-check (bout en bout avec tsc)", () => {
         }
         expect(errors).toHaveLength(expected.length + xmlExpected.length);
         expect(errors.some((e) => e.includes('template "Good"'))).toBe(false);
+        expect(errors.some((e) => e.includes('template "Macros"'))).toBe(false);
     }, 60000);
 });
