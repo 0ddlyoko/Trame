@@ -95,3 +95,31 @@ describe("props : même objet en dev et en prod (pas de Proxy de lecture seule)"
         });
     }
 });
+
+describe("expressions : vrai parseur (portées JavaScript)", () => {
+    test("variables et fonctions déclarées dans un gestionnaire", async () => {
+        class C extends Component {
+            static template = xml`<div>
+                <button t-on-click="() => { const step = 2; let total = 0; for (const n of [1, 2]) { total += n * step; } count = total; }">+</button>
+                <span>{{ count }}</span>
+                <ul><li t-foreach="items.filter(function (it) { return it.ok; })" t-as="it" t-key="it.id">{{ it.id }}</li></ul>
+            </div>`;
+            @state accessor count = 0;
+            items = [
+                { id: 1, ok: true },
+                { id: 2, ok: false },
+            ];
+        }
+        const { fixture } = await render(C);
+        (fixture.querySelector("button") as HTMLButtonElement).click();
+        expect(fixture.querySelector("span")!.textContent).toBe("6");
+        expect(fixture.querySelector("ul")!.innerHTML).toBe("<li>1</li>");
+    });
+
+    test("une erreur de syntaxe indique le template et l'expression", async () => {
+        class C extends Component {
+            static template = xml`<div>{{ a + }}</div>`;
+        }
+        await expect(render(C)).rejects.toThrow(/template "C".*a \+/s);
+    });
+});

@@ -66,6 +66,93 @@ describe("réécriture des expressions", () => {
     });
 });
 
+describe("réécriture des expressions : portées JavaScript", () => {
+    test("variables déclarées dans le corps d'une fonction fléchée", () => {
+        expect(c("() => { const x = 1; return x + y; }")).toBe("() => { const x = 1; return x + $c.y; }");
+        expect(c("() => { let [a, { b }] = pair; return a + b; }")).toBe("() => { let [a, { b }] = $c.pair; return a + b; }");
+        expect(c("() => { var n = 0; n++; total = n; }")).toBe("() => { var n = 0; n++; $c.total = n; }");
+    });
+
+    test("paramètres de function et fonctions déclarées (hissées)", () => {
+        expect(c("items.filter(function (it) { return it.ok; })")).toBe("$c.items.filter(function (it) { return it.ok; })");
+        expect(c("() => { return f(1); function f(v) { return v * k; } }")).toBe("() => { return f(1); function f(v) { return v * $c.k; } }");
+    });
+
+    test("portée de bloc : let/const ne débordent pas", () => {
+        expect(c("() => { if (a) { const x = 1; } return x; }")).toBe("() => { if ($c.a) { const x = 1; } return $c.x; }");
+    });
+
+    test("for, for...of, for...in, catch", () => {
+        expect(c("() => { for (let i = 0; i < n; i++) { s += i; } }")).toBe("() => { for (let i = 0; i < $c.n; i++) { $c.s += i; } }");
+        expect(c("() => { for (const l of lines) total += l.price; }")).toBe("() => { for (const l of $c.lines) $c.total += l.price; }");
+        expect(c("() => { for (const k in obj) keys.push(k); }")).toBe("() => { for (const k in $c.obj) $c.keys.push(k); }");
+        expect(c("async () => { try { await save(); } catch (e) { error = e.message; } }")).toBe(
+            "async () => { try { await $c.save(); } catch (e) { $c.error = e.message; } }",
+        );
+    });
+
+    test("méthodes et accesseurs d'un littéral objet : this est celui de l'objet", () => {
+        expect(c("({ get x() { return this.y + z; } })")).toBe("({ get x() { return this.y + $c.z; } })");
+        expect(c("{ f(a) { return a + b; } }")).toBe("{ f(a) { return a + $c.b; } }");
+        // Dans une fonction fléchée, this reste le composant.
+        expect(c("() => this.save()")).toBe("() => $c.save()");
+    });
+
+    test("propriétés raccourcies, clés calculées, affectation par décomposition", () => {
+        expect(c("{ [key]: value, name }")).toBe("{ [$c.key]: $c.value, name: $c.name }");
+        expect(c("[a, b] = [b, a]")).toBe("[$c.a, $c.b] = [$c.b, $c.a]");
+        expect(c("({ a } = obj)")).toBe("({ a: $c.a } = $c.obj)");
+    });
+
+    test("template literals imbriqués et paramètres visibles dans ${}", () => {
+        expect(c("items.map((i) => `${i.id}-${sep}-${`${i.n}`}`)")).toBe("$c.items.map((i) => `${i.id}-${$c.sep}-${`${i.n}`}`)");
+    });
+
+    test("un paramètre masque une variable locale du template", () => {
+        expect(c("(line) => line.id + other", { line: "it1.get()", other: "v2.get()" })).toBe("(line) => line.id + v2.get()");
+    });
+
+    test("expressions régulières, division et ternaires", () => {
+        expect(c("a / b / c")).toBe("$c.a / $c.b / $c.c");
+        expect(c("x.match(/a\\/b/g) ? 1 : 2")).toBe("$c.x.match(/a\\/b/g) ? 1 : 2");
+        expect(c("a ?.5 : b")).toBe("$c.a ?.5 : $c.b");
+    });
+
+    test("mots contextuels utilisables comme noms (of, get, set, async)", () => {
+        expect(c("of + get + set")).toBe("$c.of + $c.get + $c.set");
+        expect(c("{ get: 1, set }")).toBe("{ get: 1, set: $c.set }");
+    });
+
+    test("opérateurs et formes diverses", () => {
+        expect(c("new Foo(a).b")).toBe("new $c.Foo($c.a).b");
+        expect(c("a?.[b]?.(c)")).toBe("$c.a?.[$c.b]?.($c.c)");
+        expect(c("typeof x === 'y' && !(k in obj) && o instanceof Date")).toBe("typeof $c.x === 'y' && !($c.k in $c.obj) && $c.o instanceof Date");
+        expect(c("delete map[k]")).toBe("delete $c.map[$c.k]");
+        expect(c("async (x) => await save(x)")).toBe("async (x) => await $c.save(x)");
+        expect(c("async x => x")).toBe("async x => x");
+        expect(c("[...list, ...[a]]")).toBe("[...$c.list, ...[$c.a]]");
+        expect(c("f(...args)")).toBe("$c.f(...$c.args)");
+        expect(c("tag`x${y}`")).toBe("$c.tag`x${$c.y}`");
+        expect(c("a /* commentaire */ + b // fin")).toBe("$c.a   + $c.b  ");
+        expect(c("() => { outer: for (;;) { break outer; } }")).toBe("() => { outer: for (;;) { break outer; } }");
+        expect(c("() => { switch (k) { case 1: { const z = 1; return z; } default: return w; } }")).toBe(
+            "() => { switch ($c.k) { case 1: { const z = 1; return z; } default: return $c.w; } }",
+        );
+    });
+
+    test("macros : sans argument, c'est un appel normal", () => {
+        expect(c("refresh()")).toBe("$c.refresh()");
+        expect(c("(order) => loading(order)")).toBe("(order) => $h.loading(() => (order))");
+    });
+
+    test("erreurs de syntaxe claires", () => {
+        expect(() => c("a +")).toThrow(/expression/);
+        expect(() => c("(a")).toThrow(/expression/);
+        expect(() => c("{ a: 1 ")).toThrow(/expression/);
+        expect(() => c("a b")).toThrow(/expression/);
+    });
+});
+
 describe("parseur XML", () => {
     test("éléments, attributs, texte, entités, commentaires, CDATA", () => {
         const nodes = parseXML(`<div a="1" b='x &amp; y'><!-- c --><p>a &lt; b &#233;</p><![CDATA[<raw>]]><br/></div>`);
