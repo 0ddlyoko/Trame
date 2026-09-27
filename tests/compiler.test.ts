@@ -126,6 +126,11 @@ describe("réécriture des expressions : portées JavaScript", () => {
         expect(c("{ get: 1, set }")).toBe("{ get: 1, set: $c.set }");
     });
 
+    test("identifiants accentués (caractères Unicode)", () => {
+        expect(c("quantité * prixUnité")).toBe("$c.quantité * $c.prixUnité");
+        expect(c("(été) => été + hiver")).toBe("(été) => été + $c.hiver");
+    });
+
     test("opérateurs et formes diverses", () => {
         expect(c("new Foo(a).b")).toBe("new $c.Foo($c.a).b");
         expect(c("a?.[b]?.(c)")).toBe("$c.a?.[$c.b]?.($c.c)");

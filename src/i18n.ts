@@ -29,7 +29,8 @@ export function translateTemplateText(text: string): string {
     }
     const match = /^(\s*)([\s\S]*?)(\s*)$/.exec(text)!;
     const content = match[2];
-    if (!/[^\s\d.,:;!?()\-+*/%€$#@&|'"«»…]/.test(content)) {
+    // Rien à traduire : chiffres, ponctuation et symboles (€ « » … écrits en échappements : bundles en ASCII pur).
+    if (!/[^\s\d.,:;!?()\-+*/%\u20AC$#@&|'"\u00AB\u00BB\u2026]/.test(content)) {
         return text;
     }
     return match[1] + translator(content) + match[3];

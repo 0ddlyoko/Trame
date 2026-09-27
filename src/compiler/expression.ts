@@ -222,8 +222,9 @@ const BINARY_OPS = new Set(["+", "-", "*", "/", "%", "**", "==", "!=", "===", "!
 const UNARY_OPS = new Set(["!", "~", "+", "-", "++", "--"]);
 const UNARY_WORDS = new Set(["typeof", "void", "delete", "await"]);
 
-const ID_START = /[A-Za-z_$À-￿]/;
-const ID_CHAR = /[\w$À-￿]/;
+// Lettres accentuées et autres caractères Unicode, écrits en échappements (bundles en ASCII pur).
+const ID_START = /[A-Za-z_$\u00C0-\uFFFF]/;
+const ID_CHAR = /[\w$\u00C0-\uFFFF]/;
 
 /** Mots-clés après lesquels un "/" commence une expression régulière. */
 const REGEX_AFTER_KEYWORDS = new Set(["return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "case", "yield", "await", "throw", "else", "do"]);
