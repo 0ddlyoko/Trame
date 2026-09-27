@@ -12,7 +12,7 @@ Les choix de conception et leurs raisons sont détaillés dans [docs/design.md](
 
 ## Démarrage
 
-Prérequis : Node.js ≥ 20.
+Prérequis pour le développement : Node.js 22 ou 24 (Vitest 5, jsdom 30). La bibliothèque distribuée, elle, cible les navigateurs ES2019.
 
 ```bash
 npm install
@@ -20,6 +20,7 @@ npm test            # tests (Vitest + jsdom)
 npm run typecheck   # vérification TypeScript 7
 npm run build       # dist/trame.js (ESM), dist/trame.min.js, dist/trame.iife.js, dist/types/
 npm run example     # démo « commande » sur http://localhost:8000
+npm run bench:chrome  # mesures dans Chrome contre OWL 3 (voir docs/design.md, section Performances)
 ```
 
 Fichiers produits par `npm run build` (modules ES compatibles ES2019 : Chrome 73+, Firefox 67+, Safari 12.1+, Edge 79+) :

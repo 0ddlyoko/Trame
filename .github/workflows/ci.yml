@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: Tests (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # L'outillage (Vitest 5, jsdom 30) demande Node 22 ou 24.
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - name: Vérification TypeScript
+        run: npm run typecheck
+      - name: Tests
+        run: npm test
+      - name: Vérification des templates (trame-check)
+        run: npm run check:templates
+      - name: Build
+        run: npm run build
