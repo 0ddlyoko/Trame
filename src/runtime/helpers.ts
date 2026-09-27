@@ -88,8 +88,8 @@ export const helpers = {
     out(anchor: Node, fn: () => unknown, loc?: string): OutRegion {
         return new OutRegion(anchor, fn, loc);
     },
-    comp(anchor: Node, parent: Component, name: string, props: object, slots: Slots | null, loc?: string): StaticRegion {
-        return new StaticRegion(anchor, () => renderComponent(resolveComponent(parent, name), props, slots).roots, loc);
+    comp(anchor: Node, parent: Component, name: string, props: object, slots: Slots | null, loc?: string, solo?: number): StaticRegion {
+        return new StaticRegion(anchor, () => renderComponent(resolveComponent(parent, name), props, slots).roots, loc, solo === 1);
     },
     dyn(anchor: Node, parent: Component, fn: () => unknown, props: object, slots: Slots | null, loc?: string): SwitchRegion {
         return new SwitchRegion(

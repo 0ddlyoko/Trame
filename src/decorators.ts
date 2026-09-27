@@ -127,7 +127,9 @@ type GetterDecorator = <This extends object, V>(getter: (this: This) => V, conte
 
 /** Effet de préchargement : lit la valeur sans faire attendre l'affichage ni signaler d'erreur. */
 class PreloadEffect extends Effect {
-    override waitsForPending = false;
+    override get waitsForPending(): boolean {
+        return false;
+    }
 
     protected override handleError(): void {}
 }

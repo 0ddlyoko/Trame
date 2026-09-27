@@ -156,8 +156,17 @@ export class CodeGenerator {
 class BlockBuilder {
     private readonly roots: RootEntry[] = [];
     private readonly ops: string[] = [];
+    /** Composants statiques du bloc : région et index de leur instruction (voir finish). */
+    private readonly components: { region: string; op: number }[] = [];
 
-    constructor(private readonly gen: CodeGenerator) {}
+    /**
+     * @param exclusive  le bloc est construit sous un scope qui lui est propre (ligne, branche, slot...) ;
+     *                   faux pour le bloc racine d'un template, construit sous le scope du composant.
+     */
+    constructor(
+        private readonly gen: CodeGenerator,
+        private readonly exclusive = false,
+    ) {}
 
     /** Construit le corps d'une fonction qui crée le bloc et renvoie ses racines. */
     build(ast: AST, scope: Scope): string {
@@ -273,6 +282,9 @@ class BlockBuilder {
             case "component": {
                 const region = gen.uid("r");
                 const anchor = this.anchor(parent, region);
+                if (ast.dynamic === null) {
+                    this.components.push({ region, op: this.ops.length });
+                }
                 this.ops.push(`const ${region} = ${this.component(ast, anchor, scope)};`);
                 return scope;
             }
@@ -404,7 +416,7 @@ class BlockBuilder {
     }
 
     private subBlock(ast: AST, scope: Scope, params: string[]): string {
-        const body = new BlockBuilder(this.gen).build(ast, scope);
+        const body = new BlockBuilder(this.gen, true).build(ast, scope);
         return `(${params.join(", ")}) => {\n${body}\n}`;
     }
 
@@ -412,6 +424,13 @@ class BlockBuilder {
 
     private finish(): string {
         const gen = this.gen;
+        // Composant seul dans un bloc qui a son propre scope : il l'utilise directement (un scope de moins).
+        if (this.exclusive && this.roots.length === 1) {
+            const solo = this.components.find((c) => c.region === this.roots[0].region);
+            if (solo !== undefined) {
+                this.ops[solo.op] = this.ops[solo.op].replace(/\);$/, ", 1);");
+            }
+        }
         const nav: string[] = [];
         // Une racine unique qui est l'ancre d'une région doit avoir un parent : on passe par un fragment.
         const single = this.roots.length === 1 && this.roots[0].region === undefined;

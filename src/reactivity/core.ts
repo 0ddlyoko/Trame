@@ -222,25 +222,54 @@ export class Signal<T> extends ReactiveNode {
 
 // --- Calculs -------------------------------------------------------------------------------------
 
+/**
+ * Exécution en cours (une seule à la fois ; les exécutions imbriquées sauvegardent et restaurent ces
+ * variables) : calcul dont on collecte les sources, liste des sources en construction et ressources en
+ * attente lues. Gardés ici plutôt que dans chaque calcul, ils ne coûtent rien entre deux exécutions.
+ */
+let tracker: Computation | null = null;
+let trackedHead: Link | null = null;
+let trackedTail: Link | null = null;
+let trackedPending: Set<PendingSource> | null = null;
+
+/** Drapeaux d'un calcul (regroupés dans un seul champ). */
+const TRACKED = 1;
+const LIVE = 2;
+const DISPOSED = 4;
+const QUEUED = 8;
+
 export abstract class Computation extends ReactiveNode {
     state = DIRTY;
     /** Sources lues lors de la dernière exécution (liste de liens, dans l'ordre de lecture). */
     private sourcesHead: Link | null = null;
-    /** Exécuté au moins une fois (ses sources sont connues) ? */
-    protected tracked = false;
-    /** Exécution en cours : liste des sources en construction. */
-    private tracking = false;
-    private trackedHead: Link | null = null;
-    private trackedTail: Link | null = null;
     /** Ressources en attente lues (directement ou via un computed) lors de la dernière exécution. */
     pending: Set<PendingSource> | null = null;
-    private collectingPending: Set<PendingSource> | null = null;
+    protected flags = 0;
+
+    /** Exécuté au moins une fois (ses sources sont connues) ? */
+    protected get tracked(): boolean {
+        return (this.flags & TRACKED) !== 0;
+    }
+
     /** Abonné à ses sources ? */
-    live = false;
-    disposed = false;
+    get live(): boolean {
+        return (this.flags & LIVE) !== 0;
+    }
+
+    set live(value: boolean) {
+        this.flags = value ? this.flags | LIVE : this.flags & ~LIVE;
+    }
+
+    get disposed(): boolean {
+        return (this.flags & DISPOSED) !== 0;
+    }
+
+    set disposed(value: boolean) {
+        this.flags = value ? this.flags | DISPOSED : this.flags & ~DISPOSED;
+    }
 
     addSource(source: ReactiveNode): void {
-        if (!this.tracking) {
+        if (tracker !== this) {
             return;
         }
         let link = source.currentLink;
@@ -254,12 +283,12 @@ export abstract class Computation extends ReactiveNode {
             link.rollback = source.currentLink;
             source.currentLink = link;
         }
-        if (this.trackedTail !== null) {
-            this.trackedTail.nextTracked = link;
+        if (trackedTail !== null) {
+            trackedTail.nextTracked = link;
         } else {
-            this.trackedHead = link;
+            trackedHead = link;
         }
-        this.trackedTail = link;
+        trackedTail = link;
         if (source instanceof Computed && source.pending !== null) {
             for (const p of source.pending) {
                 this.addPending(p);
@@ -268,12 +297,14 @@ export abstract class Computation extends ReactiveNode {
     }
 
     addPending(source: PendingSource): void {
-        (this.collectingPending ??= new Set()).add(source);
+        if (tracker === this) {
+            (trackedPending ??= new Set()).add(source);
+        }
     }
 
     /** Pendant l'exécution : une ressource en attente a-t-elle été lue ? */
     hasPendingReads(): boolean {
-        return this.collectingPending !== null && this.collectingPending.size > 0;
+        return tracker === this && trackedPending !== null && trackedPending.size > 0;
     }
 
     /** Parcourt les sources lues lors de la dernière exécution. */
@@ -298,7 +329,7 @@ export abstract class Computation extends ReactiveNode {
     /** Exécute `fn` en collectant les dépendances, puis met à jour les abonnements. */
     runTracked<R>(fn: () => R): R {
         const prevObserver = currentObserver;
-        if (this.tracking) {
+        if (tracker === this) {
             // Réentrance (rare) : les lectures s'ajoutent à l'exécution en cours.
             currentObserver = this;
             try {
@@ -307,31 +338,37 @@ export abstract class Computation extends ReactiveNode {
                 currentObserver = prevObserver;
             }
         }
-        const prevPending = this.collectingPending;
-        this.collectingPending = null;
+        const prevTracker = tracker;
+        const prevHead = trackedHead;
+        const prevTail = trackedTail;
+        const prevPending = trackedPending;
         // Les liens de l'exécution précédente deviennent « courants » : une relecture les réutilise.
         for (let link = this.sourcesHead; link !== null; link = link.nextSource) {
             link.rollback = link.source.currentLink;
             link.source.currentLink = link;
             link.version = -1;
         }
-        this.tracking = true;
-        this.trackedHead = null;
-        this.trackedTail = null;
+        tracker = this;
+        trackedHead = null;
+        trackedTail = null;
+        trackedPending = null;
         currentObserver = this;
         try {
             return fn();
         } finally {
             currentObserver = prevObserver;
-            this.tracking = false;
-            this.pending = this.collectingPending;
-            this.collectingPending = prevPending;
-            this.commitSources();
+            const head = trackedHead;
+            this.pending = trackedPending;
+            tracker = prevTracker;
+            trackedHead = prevHead;
+            trackedTail = prevTail;
+            trackedPending = prevPending;
+            this.commitSources(head);
         }
     }
 
     /** Fin d'exécution : abandonne les sources non relues, abonne les nouvelles. */
-    private commitSources(): void {
+    private commitSources(newHead: Link | null): void {
         const live = this.live;
         for (let link = this.sourcesHead; link !== null; link = link.nextSource) {
             link.source.currentLink = link.rollback;
@@ -340,7 +377,7 @@ export abstract class Computation extends ReactiveNode {
                 link.source.unlinkObserver(link);
             }
         }
-        for (let link = this.trackedHead; link !== null; ) {
+        for (let link = newHead; link !== null; ) {
             const next: Link | null = link.nextTracked;
             if (link.fresh) {
                 link.source.currentLink = link.rollback;
@@ -354,10 +391,8 @@ export abstract class Computation extends ReactiveNode {
             link.nextTracked = null;
             link = next;
         }
-        this.sourcesHead = this.trackedHead;
-        this.trackedHead = null;
-        this.trackedTail = null;
-        this.tracked = true;
+        this.sourcesHead = newHead;
+        this.flags |= TRACKED;
     }
 
     /** Abonne toutes les sources (passage à l'état vivant). */
@@ -560,27 +595,47 @@ export const PRIORITY_USER = 2;
 
 let effectIds = 0;
 
+/** Localisations des effets dans les templates (mode dev seulement : messages d'erreur). */
+const effectLocations = new WeakMap<Effect, string>();
+
 export class Effect extends Computation {
-    queued = false;
-    readonly id = effectIds++;
-    /** Localisation dans un template (messages d'erreur en mode dev). */
-    loc: string | undefined = undefined;
-    /** Les ressources en attente lues font-elles attendre l'affichage (frontière du scope) ? */
-    waitsForPending = true;
+    /** Clé de tri dans la file : priorité, puis profondeur (parents d'abord), puis ordre de création. */
+    readonly sortKey: number;
     private cleanup: (() => void) | void = undefined;
 
     constructor(
         private readonly fn: () => void | (() => void),
         readonly owner: Owner | null,
-        readonly priority: number = PRIORITY_USER,
+        priority: number = PRIORITY_USER,
     ) {
         super();
-        this.live = true;
+        this.flags = LIVE;
+        this.sortKey = (priority * 1024 + Math.min(owner ? owner.depth : 0, 1023)) * 0x100000000 + effectIds++;
         owner?.registerEffect(this);
     }
 
-    get depth(): number {
-        return this.owner ? this.owner.depth : 0;
+    /** Les ressources en attente lues font-elles attendre l'affichage (frontière du scope) ? */
+    get waitsForPending(): boolean {
+        return true;
+    }
+
+    get queued(): boolean {
+        return (this.flags & QUEUED) !== 0;
+    }
+
+    set queued(value: boolean) {
+        this.flags = value ? this.flags | QUEUED : this.flags & ~QUEUED;
+    }
+
+    /** Localisation dans un template (conservée en mode dev seulement). */
+    get loc(): string | undefined {
+        return effectLocations.get(this);
+    }
+
+    set loc(value: string | undefined) {
+        if (value !== undefined && this.owner?.app?.dev) {
+            effectLocations.set(this, value);
+        }
     }
 
     /** Exécute l'effet immédiatement. */
@@ -632,11 +687,6 @@ export class Effect extends Computation {
             queue.push(this);
             scheduleFlush();
         }
-    }
-
-    /** Clé de tri : priorité, puis profondeur (parents d'abord), puis ordre de création. */
-    get sortKey(): number {
-        return (this.priority * 1024 + Math.min(this.depth, 1023)) * 0x100000000 + this.id;
     }
 
     /** Appelé par le flush : vérifie les sources puis exécute si nécessaire. */

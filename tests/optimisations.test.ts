@@ -1,6 +1,9 @@
 // Optimisations : le comportement doit rester identique, avec moins d'objets créés.
 import { describe, expect, test } from "vitest";
-import { Component, nextTick, patch, props, state, t, xml } from "../src/index";
+import { Component, effect, inject, nextTick, patch, props, provide, state, t, xml } from "../src/index";
+import { Effect } from "../src/reactivity/core";
+import { Owner } from "../src/reactivity/owner";
+import { ownerOf } from "../src/runtime/component";
 import { render } from "./helpers";
 
 describe("props : schéma partagé par classe", () => {
@@ -202,5 +205,146 @@ describe("@state : signal créé à la première lecture suivie", () => {
         } finally {
             unpatch();
         }
+    });
+});
+
+describe("Owner et Effect allégés", () => {
+    test("un Effect ne porte pas les champs réservés à l'exécution ni la localisation hors mode dev", () => {
+        const e = new Effect(() => {}, null);
+        const keys = Object.keys(e);
+        for (const field of ["trackedHead", "trackedTail", "tracking", "collectingPending", "loc", "id", "queued", "tracked", "live", "disposed"]) {
+            expect(keys).not.toContain(field);
+        }
+        // Les états restent lisibles.
+        expect(e.live).toBe(true);
+        expect(e.disposed).toBe(false);
+        e.dispose();
+        expect(e.disposed).toBe(true);
+    });
+
+    test("un Owner ne porte les champs rares (services, erreurs, AbortController...) que s'il en a besoin", () => {
+        const owner = new Owner(null);
+        const keys = Object.keys(owner);
+        for (const field of ["providers", "inherited", "errorHandler", "controller", "mountCallbacks"]) {
+            expect(keys).not.toContain(field);
+        }
+        owner.provide("k", 1);
+        owner.errorHandler = () => true;
+        expect(owner.lookup("k")).toBe(1);
+        expect(owner.errorHandler).not.toBeNull();
+    });
+});
+
+describe("composant seul dans son bloc : pas de scope intermédiaire", () => {
+    test("un composant seul dans une ligne utilise le scope de la ligne", async () => {
+        let list!: Component;
+        const rows: Component[] = [];
+        class Row extends Component {
+            static template = xml`<li>{{ props.n }}</li>`;
+            props = props({ n: t.number() });
+            constructor() {
+                super();
+                rows.push(this);
+            }
+        }
+        class List extends Component {
+            static template = xml`<ul><Row t-foreach="[1, 2]" t-as="n" t-key="n" n="n"/></ul>`;
+            static components = { Row };
+            constructor() {
+                super();
+                list = this;
+            }
+        }
+        await render(List);
+        // ligne → composant : un seul niveau sous le scope de la liste
+        expect(ownerOf(rows[0]).parent).toBe(ownerOf(list));
+    });
+
+    test("isolation : un @provide d'un composant de ligne ne fuit pas vers les autres lignes", async () => {
+        class Store {
+            constructor(readonly n: number) {}
+        }
+        class Leaf extends Component {
+            static template = xml`<i>{{ store.n }}</i>`;
+            @inject(Store) store!: Store;
+        }
+        class Row extends Component {
+            static template = xml`<li><Leaf/></li>`;
+            static components = { Leaf };
+            props = props({ n: t.number() });
+            @provide store = new Store(this.props.n);
+        }
+        class List extends Component {
+            static template = xml`<ul><Row t-foreach="[1, 2, 3]" t-as="n" t-key="n" n="n"/></ul>`;
+            static components = { Row };
+        }
+        const { html } = await render(List);
+        expect(html()).toBe("<ul><li><i>1</i></li><li><i>2</i></li><li><i>3</i></li></ul>");
+    });
+
+    test("nettoyage : supprimer la ligne ou fermer la branche détruit le composant", async () => {
+        const log: string[] = [];
+        class Child extends Component {
+            static template = xml`<b>{{ props.n }}</b>`;
+            props = props({ n: t.number() });
+            @effect watch() {
+                const n = this.props.n;
+                return () => log.push(`fin ${n}`);
+            }
+        }
+        class Parent extends Component {
+            static template = xml`<div><Child t-foreach="items" t-as="n" t-key="n" n="n"/><t t-if="show"><Child n="99"/></t></div>`;
+            static components = { Child };
+            @state accessor items = [1, 2];
+            @state accessor show = true;
+        }
+        const { component, html } = await render(Parent);
+        await nextTick();
+        component.items = [2];
+        component.show = false;
+        await nextTick();
+        expect(log.sort()).toEqual(["fin 1", "fin 99"]);
+        expect(html()).toBe("<div><b>2</b></div>");
+    });
+
+    test("une erreur dans un composant seul dans sa ligne atteint l'<ErrorBoundary>", async () => {
+        class Boom extends Component {
+            static template = xml`<i/>`;
+            constructor() {
+                super();
+                throw new Error("boum");
+            }
+        }
+        class Parent extends Component {
+            static template = xml`<div><ErrorBoundary><t t-set-slot="fallback">KO</t><Boom t-foreach="[1]" t-as="n" t-key="n"/></ErrorBoundary></div>`;
+            static components = { Boom };
+        }
+        const { html } = await render(Parent);
+        expect(html()).toBe("<div>KO</div>");
+    });
+
+    test("un composant racine du template garde son propre scope (portée des @provide)", async () => {
+        class Svc {}
+        let parent!: Component;
+        let child!: Component;
+        class Child extends Component {
+            static template = xml`<i/>`;
+            @provide svc = new Svc();
+            constructor() {
+                super();
+                child = this;
+            }
+        }
+        class Parent extends Component {
+            static template = xml`<Child/>`;
+            static components = { Child };
+            @provide svc = new Svc();
+            constructor() {
+                super();
+                parent = this;
+            }
+        }
+        await render(Parent); // pas d'erreur « fourni deux fois au même niveau »
+        expect(ownerOf(child)).not.toBe(ownerOf(parent));
     });
 });

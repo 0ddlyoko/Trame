@@ -42,17 +42,23 @@ export class AmbiguousService {
     constructor(public candidates: unknown[]) {}
 }
 
+/** Champs rarement utilisés d'un scope : créés à la demande, pour garder les scopes légers. */
+interface OwnerExtra {
+    /** Gestionnaire d'erreurs local : renvoie true si l'erreur est prise en charge. */
+    errorHandler: ((error: unknown) => boolean) | null;
+    /** Services fournis à ce sous-arbre, sous leur classe exacte (ou une clé explicite). */
+    providers: Map<unknown, unknown> | null;
+    /** Mêmes services, sous leurs classes parentes (plusieurs candidats : AmbiguousService). */
+    inherited: Map<unknown, unknown> | null;
+    mountCallbacks: (() => void)[] | null;
+    controller: AbortController | null;
+}
+
 export class Owner {
     readonly parent: Owner | null;
     readonly depth: number;
     app: AppContext | null;
     boundary: Boundary | null;
-    /** Gestionnaire d'erreurs local : renvoie true si l'erreur est prise en charge. */
-    errorHandler: ((error: unknown) => boolean) | null = null;
-    /** Services fournis à ce sous-arbre, sous leur classe exacte (ou une clé explicite). */
-    providers: Map<unknown, unknown> | null = null;
-    /** Mêmes services, sous leurs classes parentes (plusieurs candidats : AmbiguousService). */
-    inherited: Map<unknown, unknown> | null = null;
     /** Le scope est-il affiché dans un DOM vivant ? */
     live = false;
     /** Contenu préparé mais pas encore inséré (en attente de données). */
@@ -62,8 +68,20 @@ export class Owner {
     private children: Set<Owner> | null = null;
     private effects: Effect[] | null = null;
     private cleanups: (() => void)[] | null = null;
-    private mountCallbacks: (() => void)[] | null = null;
-    private controller: AbortController | null = null;
+    private extra: OwnerExtra | null = null;
+
+    private get x(): OwnerExtra {
+        return (this.extra ??= { errorHandler: null, providers: null, inherited: null, mountCallbacks: null, controller: null });
+    }
+
+    /** Gestionnaire d'erreurs local : renvoie true si l'erreur est prise en charge. */
+    get errorHandler(): ((error: unknown) => boolean) | null {
+        return this.extra === null ? null : this.extra.errorHandler;
+    }
+
+    set errorHandler(handler: ((error: unknown) => boolean) | null) {
+        this.x.errorHandler = handler;
+    }
 
     constructor(parent: Owner | null = currentOwner) {
         this.parent = parent;
@@ -81,7 +99,7 @@ export class Owner {
 
     /** AbortSignal déclenché à la destruction du scope. */
     get abortSignal(): AbortSignal {
-        const controller = (this.controller ??= new AbortController());
+        const controller = (this.x.controller ??= new AbortController());
         if (this.disposed && !controller.signal.aborted) {
             controller.abort();
         }
@@ -112,7 +130,7 @@ export class Owner {
         if (this.live) {
             fn();
         } else {
-            (this.mountCallbacks ??= []).push(fn);
+            (this.x.mountCallbacks ??= []).push(fn);
         }
     }
 
@@ -128,9 +146,9 @@ export class Owner {
             }
         }
         this.live = true;
-        const callbacks = this.mountCallbacks;
+        const callbacks = this.extra === null ? null : this.extra.mountCallbacks;
         if (callbacks !== null) {
-            this.mountCallbacks = null;
+            this.extra!.mountCallbacks = null;
             for (const cb of callbacks) {
                 try {
                     cb();
@@ -148,13 +166,14 @@ export class Owner {
     lookup(key: unknown): unknown {
         let owner: Owner | null = this;
         while (owner !== null) {
-            const providers = owner.providers;
-            if (providers !== null && providers.has(key)) {
-                return providers.get(key);
-            }
-            const inherited = owner.inherited;
-            if (inherited !== null && inherited.has(key)) {
-                return inherited.get(key);
+            const extra = owner.extra;
+            if (extra !== null) {
+                if (extra.providers !== null && extra.providers.has(key)) {
+                    return extra.providers.get(key);
+                }
+                if (extra.inherited !== null && extra.inherited.has(key)) {
+                    return extra.inherited.get(key);
+                }
             }
             owner = owner.parent;
         }
@@ -163,7 +182,7 @@ export class Owner {
 
     /** Fournit `value` sous `key` (classe exacte ou clé explicite) : une seule fois par scope. */
     provide(key: unknown, value: unknown, describe: (value: unknown) => string = String): void {
-        const providers = (this.providers ??= new Map());
+        const providers = (this.x.providers ??= new Map());
         if (providers.has(key)) {
             throw new Error(
                 `[trame] Service ${describe(key)} fourni deux fois au même niveau (${describe(providers.get(key))} puis ${describe(value)}). ` +
@@ -175,7 +194,7 @@ export class Owner {
 
     /** Fournit `value` sous une de ses classes parentes. Deux services différents : injection ambiguë. */
     provideInherited(key: unknown, value: unknown): void {
-        const inherited = (this.inherited ??= new Map());
+        const inherited = (this.x.inherited ??= new Map());
         const existing = inherited.get(key);
         if (existing === undefined) {
             inherited.set(key, value);
@@ -188,7 +207,10 @@ export class Owner {
 
     /** Remplace une valeur fournie (service instancié à la première demande) sous toutes ses clés. */
     replaceProvided(from: unknown, to: unknown): void {
-        for (const map of [this.providers, this.inherited]) {
+        if (this.extra === null) {
+            return;
+        }
+        for (const map of [this.extra.providers, this.extra.inherited]) {
             if (map === null) {
                 continue;
             }
@@ -265,8 +287,10 @@ export class Owner {
                 }
             }
         }
-        this.mountCallbacks = null;
-        this.controller?.abort();
+        if (this.extra !== null) {
+            this.extra.mountCallbacks = null;
+            this.extra.controller?.abort();
+        }
         this.parent?.children?.delete(this);
     }
 }

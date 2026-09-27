@@ -117,11 +117,15 @@ function requireOwner(): Owner {
 export class StaticRegion extends Region {
     private item: Item | null = null;
 
-    constructor(anchor: Node, build: BlockBuilder, loc?: string) {
+    /**
+     * @param shareOwner  le contenu est seul dans un bloc qui a déjà son propre scope (ligne, branche,
+     *                    slot) : il l'utilise directement au lieu d'en créer un de plus.
+     */
+    constructor(anchor: Node, build: BlockBuilder, loc?: string, shareOwner = false) {
         super(anchor);
         const owner = requireOwner();
         try {
-            this.item = buildItem(owner, build);
+            this.item = shareOwner ? { roots: runWithOwner(owner, () => untrack(build)), owner, placeholder: null } : buildItem(owner, build);
             // Détruit pendant la construction (une <ErrorBoundary> a affiché son fallback) : on s'arrête.
             if (!owner.disposed) {
                 insertItem(this.item, anchor.parentNode!, anchor);
