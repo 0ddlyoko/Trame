@@ -81,8 +81,9 @@ export const helpers = {
         keyFn: ((item: unknown, index: number) => unknown) | null,
         rowFn: (item: unknown, index: unknown) => Root[],
         loc?: string,
+        withIndex?: number,
     ): ListRegion {
-        return new ListRegion(anchor, listFn, keyFn, rowFn, loc);
+        return new ListRegion(anchor, listFn, keyFn, rowFn, loc, withIndex !== 0);
     },
     out(anchor: Node, fn: () => unknown, loc?: string): OutRegion {
         return new OutRegion(anchor, fn, loc);

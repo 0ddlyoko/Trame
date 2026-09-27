@@ -46,6 +46,8 @@ class Scope implements ExpressionScope {
         private readonly parent: Scope | null,
         private readonly vars: Map<string, string>,
         private readonly mode: CompileMode,
+        /** Appelé quand une variable de cette portée est utilisée. */
+        private readonly onUse: ((name: string) => void) | null = null,
     ) {}
 
     static root(mode: CompileMode): Scope {
@@ -56,8 +58,8 @@ class Scope implements ExpressionScope {
         return new Scope(this, new Map([[name, code]]), this.mode);
     }
 
-    withAll(entries: [string, string][]): Scope {
-        return new Scope(this, new Map(entries), this.mode);
+    withAll(entries: [string, string][], onUse: ((name: string) => void) | null = null): Scope {
+        return new Scope(this, new Map(entries), this.mode, onUse);
     }
 
     resolve(name: string): string | undefined {
@@ -65,6 +67,7 @@ class Scope implements ExpressionScope {
         while (scope !== null) {
             const code = scope.vars.get(name);
             if (code !== undefined) {
+                scope.onUse?.(name);
                 return code;
             }
             scope = scope.parent;
@@ -248,14 +251,23 @@ class BlockBuilder {
                     [`${ast.as}_index`, "i"],
                 ]);
                 const keyFn = ast.key === null ? "null" : `(v, i) => (${gen.expr(ast.key, keyScope)})`;
-                const rowScope = scope.withAll([
-                    [ast.as, `${item}.get()`],
-                    [`${ast.as}_index`, `${index}.get()`],
-                ]);
+                let usesIndex = false;
+                const rowScope = scope.withAll(
+                    [
+                        [ast.as, `${item}.get()`],
+                        [`${ast.as}_index`, `${index}.get()`],
+                    ],
+                    (name) => {
+                        if (name === `${ast.as}_index`) {
+                            usesIndex = true;
+                        }
+                    },
+                );
                 const loc = gen.location(ast.pos, `t-foreach="${ast.collection}"` + (ast.key ? ` t-key="${ast.key}"` : ""));
                 const collection = gen.expr(ast.collection, scope);
                 const rowFn = this.subBlock(ast.body, rowScope, [item, index]);
-                this.ops.push(`const ${region} = $h.each(${anchor}, () => (${collection}), ${keyFn}, ${rowFn}, ${loc});`);
+                // Signal d'index créé seulement si le template lit `x_index`.
+                this.ops.push(`const ${region} = $h.each(${anchor}, () => (${collection}), ${keyFn}, ${rowFn}, ${loc}, ${usesIndex ? 1 : 0});`);
                 return scope;
             }
             case "component": {

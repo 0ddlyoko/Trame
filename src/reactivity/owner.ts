@@ -292,6 +292,11 @@ export class Boundary implements PendingWaiter {
         return !this.settled;
     }
 
+    /** Des ressources en premier chargement ont-elles été lues (et sont-elles attendues) ? */
+    get waiting(): boolean {
+        return this.pending.size > 0;
+    }
+
     wait(source: PendingSource, reader?: Owner): void {
         if (this.settled || this.closed || this.pending.has(source)) {
             return;

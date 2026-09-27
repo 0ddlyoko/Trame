@@ -263,7 +263,8 @@ export class SwitchRegion extends Region {
 interface Row extends Item {
     key: unknown;
     item: Signal<unknown>;
-    index: Signal<number>;
+    /** Index de la ligne (absent si le template ne lit pas `x_index`). */
+    index: Signal<number> | null;
     boundary: Boundary | null;
 }
 
@@ -304,8 +305,10 @@ export class ListRegion extends Region {
         anchor: Node,
         listFn: () => unknown,
         private readonly keyFn: ((item: unknown, index: number) => unknown) | null,
-        private readonly rowBuilder: (item: Signal<unknown>, index: Signal<number>) => Root[],
+        private readonly rowBuilder: (item: Signal<unknown>, index: Signal<number> | null) => Root[],
         loc?: string,
+        /** Le template lit-il `x_index` ? (vrai par défaut : templates précompilés plus anciens). */
+        private readonly withIndex = true,
     ) {
         super(anchor);
         this.owner = requireOwner();
@@ -399,7 +402,7 @@ export class ListRegion extends Region {
             if (existing !== undefined) {
                 byKey.delete(key);
                 existing.item.set(items[i]);
-                existing.index.set(i);
+                existing.index?.set(i);
                 newRows[i] = existing;
                 oldPositions[i] = oldIndex.get(existing)!;
             } else {
@@ -442,7 +445,7 @@ export class ListRegion extends Region {
 
     private createRow(key: unknown, value: unknown, index: number): Row {
         const item = new Signal<unknown>(value);
-        const indexSig = new Signal(index);
+        const indexSig = this.withIndex ? new Signal(index) : null;
         const live = this.owner.live;
         let boundary: Boundary | null = null;
         let row!: Row;
@@ -453,10 +456,17 @@ export class ListRegion extends Region {
             );
         }
         const built = buildItem(this.owner, () => this.rowBuilder(item, indexSig), boundary ?? undefined);
-        row = { ...built, key, item, index: indexSig, boundary };
+        row = { roots: built.roots, owner: built.owner, placeholder: null, key, item, index: indexSig, boundary };
         if (boundary !== null) {
-            // Tant que la ligne n'est pas prête, un nœud vide tient sa place.
-            row.placeholder = document.createTextNode("");
+            if (boundary.waiting) {
+                // La ligne attend une donnée : un nœud vide tient sa place jusqu'à ce qu'elle soit prête.
+                row.placeholder = document.createTextNode("");
+            } else {
+                // Rien n'est attendu (cas courant) : la ligne sera insérée directement.
+                boundary.cancel();
+                row.boundary = null;
+                row.owner.boundary = this.owner.boundary;
+            }
         }
         return row;
     }
@@ -464,6 +474,12 @@ export class ListRegion extends Region {
     private rowInserted(row: Row): void {
         if (row.boundary !== null) {
             row.boundary.done();
+        } else if (row.owner.detached) {
+            // Préparée hors du DOM sans rien attendre : affichée dès son insertion.
+            row.owner.detached = false;
+            if (this.owner.live) {
+                row.owner.activate();
+            }
         }
     }
 
