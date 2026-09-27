@@ -562,3 +562,49 @@ describe("load(source, fetcher) : dépendances explicites", () => {
         expect(aborted).toEqual([2, 3]);
     });
 });
+
+describe("autres corrections", () => {
+    test("une prop inconnue nommée comme une propriété d'Object (toString, constructor) est signalée", async () => {
+        class Child extends Component {
+            static template = xml`<i/>`;
+            props = props({ value: t.number() });
+        }
+        class Parent extends Component {
+            static template = xml`<Child value="1" toString="2"/>`;
+            static components = { Child };
+        }
+        await expect(render(Parent)).rejects.toThrow(/Prop inconnue "toString"/);
+    });
+
+    test(".delegate fonctionne dans un Shadow DOM", async () => {
+        const clicks: string[] = [];
+        class C extends Component {
+            static template = xml`<div><button class="b" t-on-click.delegate="() => hit('bouton')">x</button></div>`;
+            hit(what: string) {
+                clicks.push(what);
+            }
+        }
+        const host = document.createElement("div");
+        document.body.appendChild(host);
+        const shadowRoot = host.attachShadow({ mode: "open" });
+        const container = document.createElement("div");
+        shadowRoot.appendChild(container);
+        const root = await mount(C, container);
+        try {
+            (container.querySelector(".b") as HTMLButtonElement).click();
+            expect(clicks).toEqual(["bouton"]);
+        } finally {
+            root.destroy();
+            host.remove();
+        }
+    });
+
+    test("t-foreach sur une chaîne : un caractère par ligne", async () => {
+        class C extends Component {
+            static template = xml`<p><b t-foreach="word" t-as="ch">{{ ch }}</b></p>`;
+            word = "aba";
+        }
+        const { html } = await render(C);
+        expect(html()).toBe("<p><b>a</b><b>b</b><b>a</b></p>");
+    });
+});

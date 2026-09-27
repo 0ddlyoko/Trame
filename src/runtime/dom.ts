@@ -408,13 +408,17 @@ function delegationGroup(type: string, capture: boolean, passive: boolean): Dele
     }
     const kinds: DelegatedKind[] = [];
     const listener = (ev: Event): void => {
-        let node = ev.target as Node | null;
+        // composedPath() traverse les Shadow DOM (au niveau du document, ev.target est l'hôte).
+        const path = typeof ev.composedPath === "function" ? ev.composedPath() : [];
+        const target = (path.length ? path[0] : ev.target) as Node | null;
+        let index = 0;
+        let node = target;
         while (node !== null && node !== document) {
             const holder = node as unknown as Record<symbol, EventRecord | undefined>;
             let stopped = false;
             for (const kind of kinds) {
                 const record = holder[kind.key];
-                if (record === undefined || (kind.self && ev.target !== node)) {
+                if (record === undefined || (kind.self && target !== node)) {
                     continue;
                 }
                 if (kind.prevent) {
@@ -430,7 +434,7 @@ function delegationGroup(type: string, capture: boolean, passive: boolean): Dele
                 ev.stopPropagation();
                 return;
             }
-            node = node.parentNode;
+            node = path.length ? ((path[++index] as Node | undefined) ?? null) : node.parentNode;
         }
     };
     document.addEventListener(type, listener, { capture, passive });

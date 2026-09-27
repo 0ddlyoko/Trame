@@ -194,7 +194,7 @@ export function props<S extends Shape>(schema: S): PropsOf<S> {
     if (dev) {
         untrack(() => {
             for (const key of Object.keys(raw)) {
-                if (!(key in schema)) {
+                if (!Object.prototype.hasOwnProperty.call(schema, key)) {
                     throw new Error(`[trame] Prop inconnue "${key}" passée à ${componentName}. Props déclarées : ${Object.keys(schema).join(", ") || "(aucune)"}`);
                 }
             }

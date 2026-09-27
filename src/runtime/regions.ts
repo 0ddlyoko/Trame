@@ -271,6 +271,9 @@ function toArray(value: unknown): unknown[] {
     if (typeof value === "number") {
         return Array.from({ length: value }, (_, i) => i);
     }
+    if (typeof value === "string") {
+        return Array.from(value);
+    }
     if (typeof value === "object" && typeof (value as Iterable<unknown>)[Symbol.iterator] === "function") {
         return Array.from(value as Iterable<unknown>);
     }
