@@ -122,7 +122,10 @@ export class StaticRegion extends Region {
         const owner = requireOwner();
         try {
             this.item = buildItem(owner, build);
-            insertItem(this.item, anchor.parentNode!, anchor);
+            // Détruit pendant la construction (une <ErrorBoundary> a affiché son fallback) : on s'arrête.
+            if (!owner.disposed) {
+                insertItem(this.item, anchor.parentNode!, anchor);
+            }
         } catch (e) {
             owner.handleError(annotateError(e, loc, owner));
         }
@@ -187,7 +190,9 @@ export class SwitchRegion extends Region {
             if (builder !== null) {
                 try {
                     this.current = buildItem(owner, builder);
-                    insertItem(this.current, this.anchor.parentNode!, this.anchor);
+                    if (!owner.disposed) {
+                        insertItem(this.current, this.anchor.parentNode!, this.anchor);
+                    }
                 } catch (e) {
                     owner.handleError(annotateError(e, this.loc, owner));
                 }
@@ -207,6 +212,12 @@ export class SwitchRegion extends Region {
             item = buildItem(owner, builder, boundary);
         } catch (e) {
             owner.handleError(annotateError(e, this.loc, owner));
+            return;
+        }
+        if (owner.disposed) {
+            // Une erreur de construction a fait détruire la région (fallback d'une <ErrorBoundary>).
+            boundary.cancel();
+            item.owner.dispose();
             return;
         }
         this.pending = { key, item, boundary };
@@ -394,6 +405,15 @@ export class ListRegion extends Region {
             } else {
                 newRows[i] = this.createRow(key, items[i], i);
                 oldPositions[i] = -1;
+                if (this.owner.disposed) {
+                    // Une erreur de construction a fait détruire la liste (fallback d'une <ErrorBoundary>).
+                    for (let j = 0; j <= i; j++) {
+                        if (oldPositions[j] === -1) {
+                            this.removeRow(newRows[j]);
+                        }
+                    }
+                    return;
+                }
             }
         }
         // Lignes disparues

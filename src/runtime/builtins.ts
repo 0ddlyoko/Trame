@@ -104,6 +104,8 @@ class ErrorRegion extends Region {
     private item: Item | null = null;
     private building = false;
     private pendingError: unknown = undefined;
+    /** Fallback affiché : les erreurs suivantes du contenu (en cours de destruction) sont ignorées. */
+    private failed = false;
     private readonly holder: Owner;
     private readonly owner: Owner;
 
@@ -120,6 +122,9 @@ class ErrorRegion extends Region {
     private createHolder(): Owner {
         const holder = buildHolder(this.owner);
         holder.errorHandler = (error) => {
+            if (this.failed) {
+                return true;
+            }
             if (this.building) {
                 this.pendingError ??= error;
             } else {
@@ -156,6 +161,7 @@ class ErrorRegion extends Region {
     }
 
     private showFallback(error: unknown): void {
+        this.failed = true;
         if (this.item !== null) {
             removeItem(this.item);
             this.item = null;
@@ -171,6 +177,7 @@ class ErrorRegion extends Region {
     }
 
     private reset(): void {
+        this.failed = false;
         if (this.item !== null) {
             removeItem(this.item);
             this.item = null;
