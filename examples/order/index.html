@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Trame : commande</title>
+    <style>
+        body { font-family: system-ui, sans-serif; margin: 2rem; color: #222; background: #fafafa; }
+        .app { max-width: 900px; }
+        nav { display: flex; gap: .5rem; align-items: center; margin-bottom: 1rem; }
+        nav button.active { background: #2563eb; color: white; border-color: #2563eb; }
+        button { padding: .35rem .8rem; border: 1px solid #bbb; border-radius: 4px; background: white; cursor: pointer; }
+        button:disabled { opacity: .5; }
+        h1 input { font-size: 1.4rem; font-weight: bold; border: none; background: transparent; }
+        h1 small { font-size: .8rem; color: #888; font-weight: normal; }
+        table { border-collapse: collapse; width: 100%; background: white; }
+        th, td { border-bottom: 1px solid #eee; padding: .4rem; text-align: left; }
+        td input { width: 100%; box-sizing: border-box; }
+        td input[type=number] { width: 6rem; }
+        .amount { text-align: right; font-variant-numeric: tabular-nums; }
+        footer { display: flex; gap: .5rem; align-items: center; margin-top: 1rem; }
+        footer strong { margin-left: auto; }
+        .empty { color: #888; }
+        .saved { color: #16a34a; }
+    </style>
+</head>
+<body>
+    <div id="app"></div>
+    <script type="module" src="./main.js"></script>
+</body>
+</html>

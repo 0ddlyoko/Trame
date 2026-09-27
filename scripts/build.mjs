@@ -1,0 +1,66 @@
+// Construit la distribution :
+//   dist/trame.js          module ES (un seul fichier), compatible navigateurs récents (ES2019)
+//   dist/trame.min.js      idem, minifié
+//   dist/trame.iife.js     script classique : variable globale `Trame`
+//   dist/testing.js        utilitaires de test (trame/testing), qui importent ./trame.js
+//   dist/trame-check.mjs   vérification des templates par TypeScript (npx trame-check)
+//   dist/types/            déclarations TypeScript
+import * as esbuild from "esbuild";
+import { spawnSync } from "node:child_process";
+import { rmSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = fileURLToPath(new URL("..", import.meta.url));
+rmSync(`${root}dist`, { recursive: true, force: true });
+
+const common = {
+    entryPoints: [`${root}src/index.ts`],
+    bundle: true,
+    // ES2019 : Chrome 73+, Firefox 67+, Safari 12.1+, Edge 79+. Les syntaxes plus récentes
+    // (champs privés, ?., ??...) sont converties par esbuild.
+    target: ["es2019"],
+    legalComments: "none",
+    logLevel: "info",
+};
+
+await esbuild.build({ ...common, format: "esm", outfile: `${root}dist/trame.js`, sourcemap: true });
+await esbuild.build({ ...common, format: "esm", outfile: `${root}dist/trame.min.js`, minify: true, sourcemap: true });
+await esbuild.build({ ...common, format: "iife", globalName: "Trame", outfile: `${root}dist/trame.iife.js`, sourcemap: true });
+
+// trame/testing : Trame n'est pas recopié, il est importé depuis ./trame.js (une seule instance).
+await esbuild.build({
+    ...common,
+    entryPoints: [`${root}src/testing.ts`],
+    format: "esm",
+    outfile: `${root}dist/testing.js`,
+    plugins: [
+        {
+            name: "trame-external",
+            setup(build) {
+                build.onResolve({ filter: /^\.\/index$/ }, () => ({ path: "./trame.js", external: true }));
+            },
+        },
+    ],
+});
+
+// trame-check : outil en ligne de commande (Node)
+await esbuild.build({
+    entryPoints: [`${root}src/cli/check.ts`],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    target: ["node20"],
+    outfile: `${root}dist/trame-check.mjs`,
+    banner: { js: "#!/usr/bin/env node" },
+    logLevel: "info",
+});
+
+const require = createRequire(import.meta.url);
+const tscBin = join(dirname(require.resolve("typescript/package.json")), "bin", "tsc");
+const tsc = spawnSync(process.execPath, [tscBin, "-p", `${root}tsconfig.build.json`], { stdio: "inherit" });
+if (tsc.status !== 0) {
+    process.exit(tsc.status ?? 1);
+}
+console.log("Déclarations TypeScript générées dans dist/types");

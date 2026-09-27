@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src/cli",
+    "src/compiler",
+    "tests/typecheck.test.ts"
+  ],
+  "exclude": []
+}
