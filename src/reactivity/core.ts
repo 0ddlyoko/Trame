@@ -441,6 +441,8 @@ export class Effect extends Computation {
     readonly id = effectIds++;
     /** Localisation dans un template (messages d'erreur en mode dev). */
     loc: string | undefined = undefined;
+    /** Les ressources en attente lues font-elles attendre l'affichage (frontière du scope) ? */
+    waitsForPending = true;
     private cleanup: (() => void) | void = undefined;
 
     constructor(
@@ -472,7 +474,7 @@ export class Effect extends Computation {
             }
         }
         const pending = this.pending;
-        if (pending !== null && this.owner !== null) {
+        if (pending !== null && this.owner !== null && this.waitsForPending) {
             this.owner.waitFor(pending);
         }
     }

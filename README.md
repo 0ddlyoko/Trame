@@ -88,6 +88,7 @@ Voir aussi [examples/order](examples/order) : modèles réactifs (`Order`, `Orde
 |---|---|
 | `@state accessor x = 1` | État réactif. Les objets, tableaux, `Map` et `Set` sont réactifs en profondeur. |
 | `@computed get total() {…}` | Valeur dérivée : paresseuse, mise en cache, recalculée seulement si une dépendance lue a changé. |
+| `@computed({ eager: true }) get total() {…}` | Valeur préchargée : calculée dès la construction, même si rien ne l'affiche (`t-if` fermé, onglet caché…), et tenue à jour. Les données qu'elle lit sont chargées d'avance. L'affichage n'attend pas ce préchargement ; une erreur n'y est signalée que là où la valeur est lue. |
 | `@resource accessor order = load(fetcher)` | Donnée asynchrone (voir ci-dessous). |
 | `@effect draw() {…}` | Effet de bord. Il s'exécute après le montage (pour un composant), puis à chaque changement de ce qu'il lit. Il peut renvoyer une fonction de nettoyage. |
 
@@ -124,7 +125,7 @@ Les mises à jour sont regroupées et appliquées au microtask suivant. Dans un 
 - **Rechargement** : l'ancien affichage reste en place jusqu'à l'arrivée des nouvelles données. Les données relancées par un même changement basculent ensemble (transition).
 - **Écriture locale** : `this.order = autre` remplace la valeur sans lancer de requête (mise à jour optimiste).
 - **Statut** : `loading(x)`, `error(x)` et `refresh(x)` dans les templates, `loading(() => this.x)` en TypeScript. Ils observent sans déclencher de chargement. Si le composant a une **méthode** du même nom (`refresh(id)`…), c'est elle qui est appelée ; un champ non fonction (`@state accessor loading = false`) ne gêne pas la macro.
-- `load(fetcher, { eager: true })` charge dès la création.
+- `load(fetcher, { eager: true })` charge dès la création. Pour précharger ce qu'une valeur dérivée lit (plusieurs données, dépendances entre elles), utilisez `@computed({ eager: true })`.
 
 ## Templates
 

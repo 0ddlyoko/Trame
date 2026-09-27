@@ -14,7 +14,7 @@
  */
 
 import { initPatches } from "./patch";
-import { Computed, Effect, PRIORITY_USER, scheduleMicrotask, Signal, untrack } from "./reactivity/core";
+import { Computed, Effect, PRIORITY_RESOURCE, PRIORITY_USER, scheduleMicrotask, Signal, untrack } from "./reactivity/core";
 import { AmbiguousService, getOwner, Owner, runWithOwner } from "./reactivity/owner";
 import { type Fetcher, Resource, type ResourceOptions, type SourcedFetcher } from "./reactivity/resource";
 import { reactive } from "./reactivity/store";
@@ -93,12 +93,60 @@ export function state<This extends object, V>(
 
 // --- @computed -----------------------------------------------------------------------------------
 
-/** Valeur dérivée, paresseuse et mise en cache : `@computed get total() { ... }` */
-export function computed<This extends object, V>(
+export interface ComputedDecoratorOptions {
+    /**
+     * Préchargement : la valeur est calculée dès la construction de l'objet, même si rien ne la lit
+     * (contenu d'un t-if fermé...), et recalculée quand ses dépendances changent. Les données qu'elle
+     * lit sont donc chargées d'avance. L'affichage n'attend pas ce préchargement, et une erreur n'y
+     * est pas signalée (elle le sera là où la valeur est lue).
+     */
+    eager?: boolean;
+}
+
+type GetterDecorator = <This extends object, V>(getter: (this: This) => V, context: ClassGetterDecoratorContext<This, V>) => (this: This) => V;
+
+/** Effet de préchargement : lit la valeur sans faire attendre l'affichage ni signaler d'erreur. */
+class PreloadEffect extends Effect {
+    override waitsForPending = false;
+
+    protected override handleError(): void {}
+}
+
+/**
+ * Valeur dérivée, paresseuse et mise en cache :
+ *   @computed get total() { ... }
+ *   @computed({ eager: true }) get partnerName() { ... }    préchargée (voir ComputedDecoratorOptions)
+ */
+export function computed<This extends object, V>(getter: (this: This) => V, context: ClassGetterDecoratorContext<This, V>): (this: This) => V;
+export function computed(options: ComputedDecoratorOptions): GetterDecorator;
+export function computed(first: unknown, context?: ClassGetterDecoratorContext): unknown {
+    if (context !== undefined) {
+        return computedGetter(first as () => unknown, context, {});
+    }
+    const options = first as ComputedDecoratorOptions;
+    return ((getter: () => unknown, ctx: ClassGetterDecoratorContext) => computedGetter(getter, ctx, options)) as GetterDecorator;
+}
+
+function computedGetter<This extends object, V>(
     getter: (this: This) => V,
     context: ClassGetterDecoratorContext<This, V>,
+    options: ComputedDecoratorOptions,
 ): (this: This) => V {
-    const cacheKey = Symbol(`trame.computed.${String(context.name)}`);
+    const name = context.name;
+    const cacheKey = Symbol(`trame.computed.${String(name)}`);
+    if (options.eager) {
+        context.addInitializer(function (this: This) {
+            const owner = getOwner();
+            const self = this as Record<PropertyKey, unknown>;
+            // Après la construction (les champs doivent être initialisés), sans attendre le montage.
+            scheduleMicrotask(() => {
+                if (!owner?.disposed) {
+                    // Lecture par le nom : un patch() qui surcharge le getter est pris en compte.
+                    new PreloadEffect(() => void self[name], owner, PRIORITY_RESOURCE).run();
+                }
+            });
+        });
+    }
     return function (this: This): V {
         let c = (this as Record<symbol, Computed<V> | undefined>)[cacheKey];
         if (c === undefined) {
