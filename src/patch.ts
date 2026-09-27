@@ -100,13 +100,19 @@ function findDescriptor(proto: object | null, key: PropertyKey): PropertyDescrip
 
 /** Enveloppe un membre pour initialiser les champs du patch au premier accès. */
 function withLazyInit(descriptor: PropertyDescriptor): PropertyDescriptor {
-    const wrap = (fn: Function) =>
-        function (this: object, ...args: unknown[]) {
+    const wrap = (fn: Function) => {
+        const wrapper = function (this: object, ...args: unknown[]) {
             if (this !== null && typeof this === "object") {
                 initPatches(this);
             }
             return fn.apply(this, args);
         };
+        // Marques posées par les décorateurs (ex. getter @state, pour la sérialisation JSON).
+        for (const symbol of Object.getOwnPropertySymbols(fn)) {
+            (wrapper as unknown as Record<symbol, unknown>)[symbol] = (fn as unknown as Record<symbol, unknown>)[symbol];
+        }
+        return wrapper;
+    };
     const result: PropertyDescriptor = { ...descriptor };
     if (typeof descriptor.value === "function") {
         result.value = wrap(descriptor.value);

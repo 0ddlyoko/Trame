@@ -1,6 +1,6 @@
 // Optimisations : le comportement doit rester identique, avec moins d'objets créés.
 import { describe, expect, test } from "vitest";
-import { Component, nextTick, props, state, t, xml } from "../src/index";
+import { Component, nextTick, patch, props, state, t, xml } from "../src/index";
 import { render } from "./helpers";
 
 describe("props : schéma partagé par classe", () => {
@@ -133,5 +133,74 @@ describe("t-foreach : signal d'index seulement si x_index est lu", () => {
         // Dernier argument de $h.each (après la localisation L<n>) : 1 si l'index est lu.
         expect(without).toMatch(/, L\d+, 0\);/);
         expect(withIndex).toMatch(/, L\d+, 1\);/);
+    });
+});
+
+describe("@state : signal créé à la première lecture suivie", () => {
+    class Record {
+        @state accessor name = "a";
+        @state accessor qty = 1;
+        @state accessor tags: string[] = ["x"];
+        plain = 1;
+    }
+
+    test("aucun stockage caché sur l'instance (plus de Map par objet)", () => {
+        const record = new Record();
+        void record.name;
+        record.qty = 2;
+        expect(Object.getOwnPropertySymbols(record)).toEqual([]);
+    });
+
+    test("lectures et écritures hors suivi, puis abonnement : les mises à jour arrivent", async () => {
+        const record = new Record();
+        record.name = "b"; // écriture avant tout observateur
+        expect(record.name).toBe("b");
+        class C extends Component {
+            static template = xml`<p>{{ record.name }} {{ record.qty }} {{ record.tags.length }}</p>`;
+            record = record;
+        }
+        const { html } = await render(C);
+        expect(html()).toBe("<p>b 1 1</p>");
+        record.name = "c";
+        record.qty = 5;
+        record.tags.push("y"); // tableau réactif en profondeur
+        await nextTick();
+        expect(html()).toBe("<p>c 5 2</p>");
+        record.qty = 5; // même valeur : rien à faire
+        await nextTick();
+        expect(html()).toBe("<p>c 5 2</p>");
+    });
+
+    test("un tableau affecté après coup reste réactif en profondeur", async () => {
+        const record = new Record();
+        record.tags = ["a"];
+        class C extends Component {
+            static template = xml`<p>{{ record.tags.join(",") }}</p>`;
+            record = record;
+        }
+        const { html } = await render(C);
+        record.tags.push("b");
+        await nextTick();
+        expect(html()).toBe("<p>a,b</p>");
+    });
+
+    test("JSON.stringify inclut les champs @state (hérités et ajoutés par patch compris)", () => {
+        class Special extends Record {
+            @state accessor level = 3;
+        }
+        const unpatch = patch(
+            Special,
+            class extends Special {
+                @state accessor extra = true;
+            },
+        );
+        try {
+            const special = new Special();
+            special.name = "z";
+            void (special as Special & { extra: boolean }).extra;
+            expect(JSON.parse(JSON.stringify(special))).toEqual({ plain: 1, name: "z", qty: 1, tags: ["x"], level: 3, extra: true });
+        } finally {
+            unpatch();
+        }
     });
 });

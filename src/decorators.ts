@@ -14,13 +14,14 @@
  */
 
 import { initPatches } from "./patch";
-import { Computed, Effect, PRIORITY_RESOURCE, PRIORITY_USER, scheduleMicrotask, Signal, untrack } from "./reactivity/core";
+import { Computed, Effect, getCurrentObserver, PRIORITY_RESOURCE, PRIORITY_USER, scheduleMicrotask, Signal, untrack } from "./reactivity/core";
 import { AmbiguousService, getOwner, Owner, runWithOwner } from "./reactivity/owner";
 import { type Fetcher, Resource, type ResourceOptions, type SourcedFetcher } from "./reactivity/resource";
 import { reactive } from "./reactivity/store";
 
-const STATE = Symbol("trame.state");
 const RESOURCES = Symbol("trame.resources");
+/** Marque les getters des champs @state (sérialisation JSON). */
+const STATE_GETTER = Symbol("trame.stateGetter");
 
 function storage<V>(obj: object, key: symbol): Map<PropertyKey, V> {
     let map = (obj as Record<symbol, Map<PropertyKey, V> | undefined>)[key];
@@ -39,11 +40,16 @@ function stateToJSON(this: object): Record<string, unknown> {
     for (const key of Object.keys(this)) {
         out[key] = (this as Record<string, unknown>)[key];
     }
-    const states = (this as Record<symbol, Map<PropertyKey, Signal<unknown>> | undefined>)[STATE];
-    if (states !== undefined) {
-        for (const key of states.keys()) {
-            if (typeof key === "string") {
-                out[key] = (this as Record<string, unknown>)[key];
+    // Champs @state : getters marqués de la chaîne de prototypes, de la classe de base à la plus dérivée.
+    const chain: object[] = [];
+    for (let proto = Object.getPrototypeOf(this); proto !== null && proto !== Object.prototype; proto = Object.getPrototypeOf(proto)) {
+        chain.unshift(proto);
+    }
+    for (const proto of chain) {
+        for (const name of Object.getOwnPropertyNames(proto)) {
+            const getter = Object.getOwnPropertyDescriptor(proto, name)?.get as { [STATE_GETTER]?: boolean } | undefined;
+            if (getter?.[STATE_GETTER]) {
+                out[name] = (this as Record<string, unknown>)[name];
             }
         }
     }
@@ -57,36 +63,50 @@ function ensureToJSON(instance: object): void {
     }
 }
 
-/** État réactif : `@state accessor qty = 1;` */
+/** Signal d'un champ @state : rangé dans le stockage privé de l'accessor, à la place de la valeur. */
+class StateSignal<V> extends Signal<V> {}
+
+/**
+ * État réactif : `@state accessor qty = 1;`
+ *
+ * La valeur est gardée dans le stockage privé de l'accessor. Le signal n'est créé qu'à la première
+ * lecture suivie (liaison de template, @computed, @effect...) : un champ jamais affiché ni observé ne
+ * coûte pas plus qu'un champ ordinaire. Avant cela, une écriture n'a personne à prévenir.
+ */
 export function state<This extends object, V>(
-    _target: ClassAccessorDecoratorTarget<This, V>,
+    target: ClassAccessorDecoratorTarget<This, V>,
     context: ClassAccessorDecoratorContext<This, V>,
 ): ClassAccessorDecoratorResult<This, V> {
     const key = context.name;
-    const signalOf = (instance: This): Signal<V> => {
-        const states = storage<Signal<V>>(instance, STATE);
-        let sig = states.get(key);
-        if (sig === undefined) {
-            sig = new Signal<V>(undefined as V);
-            states.set(key, sig);
+    const get = function (this: This): V {
+        const stored = target.get.call(this) as V | StateSignal<V>;
+        if (stored instanceof StateSignal) {
+            return stored.get();
         }
-        return sig;
+        if (getCurrentObserver() === null) {
+            return stored;
+        }
+        const sig = new StateSignal<V>(stored);
+        target.set.call(this, sig as unknown as V);
+        return sig.get();
     };
+    (get as { [STATE_GETTER]?: boolean })[STATE_GETTER] = true;
     return {
         init(value: V): V {
             if (value instanceof Loader) {
                 throw new Error(`[trame] "${String(key)}" : load(...) doit être utilisé avec @resource, pas @state`);
             }
-            const sig = new Signal<V>(reactive(value));
-            storage<Signal<V>>(this, STATE).set(key, sig);
             ensureToJSON(this);
-            return value;
+            return reactive(value);
         },
-        get(this: This): V {
-            return signalOf(this).get();
-        },
+        get,
         set(this: This, value: V): void {
-            signalOf(this).set(reactive(value));
+            const stored = target.get.call(this) as V | StateSignal<V>;
+            if (stored instanceof StateSignal) {
+                stored.set(reactive(value));
+            } else {
+                target.set.call(this, reactive(value));
+            }
         },
     };
 }

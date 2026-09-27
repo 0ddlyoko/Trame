@@ -86,7 +86,7 @@ Voir aussi [examples/order](examples/order) : modèles réactifs (`Order`, `Orde
 
 | Déclaration | Rôle |
 |---|---|
-| `@state accessor x = 1` | État réactif. Les objets, tableaux, `Map` et `Set` sont réactifs en profondeur. |
+| `@state accessor x = 1` | État réactif. Les objets, tableaux, `Map` et `Set` sont réactifs en profondeur. Le signal n'est créé qu'à la première lecture suivie : un champ jamais affiché ni observé coûte autant qu'un champ ordinaire. |
 | `@computed get total() {…}` | Valeur dérivée : paresseuse, mise en cache, recalculée seulement si une dépendance lue a changé. |
 | `@computed({ eager: true }) get total() {…}` | Valeur préchargée : calculée dès la construction, même si rien ne l'affiche (`t-if` fermé, onglet caché…), et tenue à jour. Les données qu'elle lit sont chargées d'avance. L'affichage n'attend pas ce préchargement ; une erreur n'y est signalée que là où la valeur est lue. |
 | `@resource accessor order = load(fetcher)` | Donnée asynchrone (voir ci-dessous). |
