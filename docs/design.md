@@ -94,19 +94,39 @@ Les enfants reçoivent leurs props sous forme de **getters**. Une liaison de l'e
 
 ## 3. Performances
 
-Le benchmark comparatif (`npm run bench`, liste de 1 000 lignes) tourne dans jsdom, avec `requestAnimationFrame` remplacé par un microtask pour ne pas pénaliser OWL. Médianes sur une machine de développement :
+Mesures dans Chrome 154 headless (`bench/props`), comparées à OWL 3.0.0-alpha.49. Scénario : 1 000 lignes, chacune un composant `Row` avec 5 champs affichés, 2 boutons conditionnels (`t-if`) et 4 props calculées (libellé, total, `canEdit`, callback). Variante « 30 champs » : enregistrements à 30 champs `@state`, dont 5 affichés. Mode production, médianes de 5 pages par variante mesurées dans le même passage.
 
-| Opération                    | Trame       | OWL 3 alpha.49 |
-|------------------------------|-------------|----------------|
-| Créer 1 000 lignes           | ~65 ms      | ~72 ms         |
-| Remplacer 1 000 lignes       | ~81 ms      | ~126 ms        |
-| Mettre à jour 1 ligne sur 10 | **~0,5 ms** | ~2,9 ms        |
-| Échanger 2 lignes            | ~1,9 ms     | ~2,4 ms        |
-| Vider                        | ~11 ms      | ~11 ms         |
+| Opération (JS + modifications du DOM, sans la mise en page) | Trame | OWL 3 |
+|---|---|---|
+| Créer 1 000 lignes | 18,1 ms | 13,4 ms |
+| Modifier le prix de 1 ligne sur 10 | 0,6 ms | 4,9 ms |
+| Modifier le libellé de 1 ligne sur 10 | 0,5 ms | 4,6 ms |
+| Prix ×2 et quantité ÷2 (total inchangé) | 0,7 ms | 4,7 ms |
+| Lecture seule : masquer / afficher 1 000 boutons | 4,1 / 4,2 ms | 9,6 / 9,6 ms |
+| Vider | 8,0 ms | 9,5 ms |
 
-jsdom n'est pas un navigateur : ces chiffres donnent une tendance. Le gain principal vient des mises à jour : Trame modifie directement les 100 nœuds texte concernés, là où OWL re-rend la liste et compare ses 1 000 blocs. Il faudra confirmer ces mesures dans un vrai navigateur.
+| Mémoire JS des 1 000 lignes (page neuve, GC forcé) | Trame | OWL 3 |
+|---|---|---|
+| Lignes à 5 champs | 4,84 Mo | 5,19 Mo |
+| Lignes à 30 champs (5 affichés) | 5,28 Mo | 5,94 Mo |
 
-Taille du bundle, messages d'erreur détaillés compris : ~93 Ko minifié (~30 Ko en gzip) pour la version complète, dont le compilateur de templates ; ~51 Ko (~17 Ko en gzip) pour `trame.runtime.js`.
+- **Mises à jour** : Trame modifie directement les nœuds concernés, là où OWL relance le rendu de la liste et compare les props des 1 000 lignes. Mise en page du navigateur comprise, l'écart est de 1,2 à 1,5×.
+- **Création** : seul point où OWL reste devant (environ 5 ms pour 1 000 lignes ; 65 contre 69 ms mise en page comprise). Le coût vient du nombre d'effets par ligne (un par liaison) et de leur première exécution.
+- **Mémoire** : un signal `@state` n'est créé qu'à la première lecture suivie, d'où l'avantage sur les enregistrements larges.
+
+Lancer les mesures (OWL n'est pas une dépendance du projet) :
+
+```bash
+npm install --no-save @odoo/owl@3.0.0-alpha.49
+npm run bench:chrome                       # temps : copie de travail et OWL
+node bench/props/run.mjs main HEAD         # compare des commits dans le même passage
+npm run bench:memory                       # mémoire (ou : node bench/props/memory.mjs <refs...>)
+node bench/props/retainers.mjs             # chemin de rétention d'une ligne supprimée (recherche de fuite)
+```
+
+Les temps dépendent de l'état de la machine : ne comparer que des variantes mesurées dans le même passage. `ScriptDuration` (DevTools) ignore les microtasks et n'est pas utilisé ; le `requestAnimationFrame` d'OWL est remplacé par un microtask pour mesurer le travail et non l'attente de la frame. L'ancien banc jsdom (`npm run bench`) reste disponible, mais jsdom n'est pas un navigateur.
+
+Taille du bundle, messages d'erreur détaillés compris : ~97 Ko minifié (~31 Ko en gzip) pour la version complète, dont le compilateur de templates ; ~55 Ko (~18 Ko en gzip) pour `trame.runtime.js`. Les bundles sont en ASCII pur (vérifié par un test).
 
 ## 4. Limites connues et pistes
 

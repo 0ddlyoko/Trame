@@ -35,6 +35,8 @@
     "test:watch": "vitest",
     "example": "node scripts/example.mjs",
     "bench": "node scripts/bench.mjs",
+    "bench:chrome": "node bench/props/run.mjs",
+    "bench:memory": "node bench/props/memory.mjs",
     "check:templates": "node scripts/check-templates.mjs examples"
   },
   "devDependencies": {
