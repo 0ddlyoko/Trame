@@ -23,7 +23,7 @@ export interface MountOptions {
     props?: object;
     /** Services fournis à toute l'application : classes (instanciées à la demande) ou instances. */
     provide?: unknown[];
-    /** Mode développement : validation des props, lecture seule vérifiée, messages détaillés. */
+    /** Mode développement : validation des props, messages détaillés. */
     dev?: boolean;
     /** Appelé pour une erreur non interceptée (par défaut : console.error puis destruction). */
     onError?: (error: unknown) => void;

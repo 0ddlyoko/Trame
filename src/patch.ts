@@ -37,13 +37,6 @@ class Stamp {
     }
 }
 
-let unwrap: (value: object) => object = (v) => v;
-
-/** Permet à la vue en lecture seule des props de donner l'objet réel. */
-export function setPatchUnwrap(fn: (value: object) => object): void {
-    unwrap = fn;
-}
-
 function runPatchFields(instance: object, patch: ClassPatch): void {
     const saved = Object.getPrototypeOf(patch.patchClass);
     const prevTarget = stampTarget;
@@ -62,7 +55,7 @@ export function initPatches(instance: object): void {
     if (classPatches.size === 0) {
         return;
     }
-    const obj = unwrap(instance);
+    const obj = instance;
     // Classes de la chaîne de prototypes, de la plus générale à la plus spécifique.
     const chain: Function[] = [];
     for (let proto = Object.getPrototypeOf(obj); proto !== null && proto !== Object.prototype; proto = Object.getPrototypeOf(proto)) {

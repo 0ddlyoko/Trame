@@ -114,30 +114,25 @@ describe("props", () => {
         expect(schema.f.check(null)).toBeNull();
     });
 
-    test("les props sont en lecture seule, en profondeur (mode dev)", async () => {
-        class Line {
-            price = 1;
-            update(p: number) {
-                this.price = p;
+    test("l'objet props lui-même n'est pas modifiable (dev et prod)", async () => {
+        for (const dev of [true, false]) {
+            const errors: unknown[] = [];
+            class Child extends Component {
+                static template = xml`<button t-on-click="mutate">x</button>`;
+                props = props({ value: t.number() });
+                mutate() {
+                    (this.props as { value: number }).value = 5;
+                }
             }
-        }
-        const errors: unknown[] = [];
-        class Child extends Component {
-            static template = xml`<button t-on-click="mutate">x</button>`;
-            props = props({ line: t.instanceOf(Line) });
-            mutate() {
-                (this.props.line as Line).price = 5;
+            class Parent extends Component {
+                static template = xml`<Child value="1"/>`;
+                static components = { Child };
             }
+            const { fixture, destroy } = await render(Parent, { dev, onError: (e) => errors.push(e) });
+            fixture.querySelector("button")!.click();
+            expect(String(errors[0])).toMatch(/lecture seule/);
+            destroy();
         }
-        class Parent extends Component {
-            static template = xml`<Child line="line"/>`;
-            static components = { Child };
-            line = new Line();
-        }
-        const { fixture, component } = await render(Parent, { onError: (e) => errors.push(e) });
-        fixture.querySelector("button")!.click();
-        expect(String(errors[0])).toMatch(/lecture seule/);
-        expect(component.line.price).toBe(1);
     });
 
     test("callback vers le parent (les données descendent, les actions remontent)", async () => {

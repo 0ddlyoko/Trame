@@ -160,7 +160,7 @@ class Card extends Component {
 ```
 
 - **Props** : `props = props({...})` fournit à la fois le type TS de `this.props`, la validation en mode dev (type, props manquantes ou inconnues) et les valeurs par défaut. Validateurs disponibles : `t.string/number/boolean/func/any/instanceOf/array/object/literal/or`, avec `.optional()`, `.default(v)` et `.orNull()`.
-- **Lecture seule profonde** : un enfant ne modifie jamais ses props. Il prévient le parent par un callback (`onUpdate`, `onRemove`…). En mode dev, toute écriture lève une erreur.
+- **Lecture seule profonde** : un enfant ne modifie jamais ses props. Il prévient le parent par un callback (`onUpdate`, `onRemove`…). C'est garanti par le type de `this.props` (`DeepReadonly`) et par `trame-check`. À l'exécution, l'enfant reçoit les objets mêmes du parent, en dev comme en prod (même identité) ; seul l'objet `this.props` refuse les écritures.
 - **Slots** : `t-set-slot="nom"` (avec `t-slot-scope="s"` pour recevoir des valeurs) côté parent, `t-slot="nom"` côté enfant. Le contenu de `t-slot` sert de contenu par défaut.
 - **Composant dynamique** : `<t t-component="expr"/>`.
 - **Composants intégrés** : `<Suspense>` (slot `fallback`), `<ErrorBoundary>` (slot `fallback` avec `{ error, reset }`) et `<Portal target="'#id'">`.
@@ -258,7 +258,6 @@ Les textes statiques des templates et les attributs `title`, `placeholder`, `alt
 `mount(..., { dev: true })` active :
 - la validation des props ;
 - les erreurs claires : composant non déclaré, clé `t-foreach` en double, service manquant ;
-- la lecture seule vérifiée des props ;
 - **la localisation des erreurs**. Une erreur levée par une liaison, un gestionnaire d'événement ou la création d'un composant indique d'où elle vient dans le template :
 
   ```

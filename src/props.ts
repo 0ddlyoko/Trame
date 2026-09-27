@@ -11,12 +11,13 @@
  * (types, props manquantes ou inconnues) et les valeurs par défaut.
  *
  * Les props sont en lecture seule, en profondeur : l'enfant ne modifie jamais ce que le parent lui
- * passe, il le prévient via un callback. En mode dev, toute écriture lève une erreur.
+ * passe, il le prévient via un callback. C'est garanti par le type (DeepReadonly) et par trame-check.
+ * À l'exécution, l'enfant reçoit les objets mêmes du parent, en dev comme en prod : seul l'objet
+ * `this.props` refuse les écritures.
  */
 
 import { untrack } from "./reactivity/core";
 import { getConstruction } from "./runtime/component";
-import { setPatchUnwrap } from "./patch";
 
 // --- Validateurs ---------------------------------------------------------------------------------
 
@@ -175,61 +176,6 @@ export type ComponentPropsInput<C> = C extends abstract new (...args: never[]) =
         : Record<string, unknown>
     : Record<string, never>;
 
-// --- Lecture seule -------------------------------------------------------------------------------
-
-const readonlyViews = new WeakMap<object, object>();
-const readonlyTargets = new WeakMap<object, object>();
-
-setPatchUnwrap((value) => readonlyTargets.get(value) ?? value);
-
-function canView(value: unknown): value is object {
-    if (value === null || typeof value !== "object") {
-        return false;
-    }
-    if (typeof Node !== "undefined" && value instanceof Node) {
-        return false;
-    }
-    return !(value instanceof Date || value instanceof RegExp || value instanceof Promise || value instanceof Error);
-}
-
-/** Vue en lecture seule (mode dev) : les lectures restent réactives, les écritures lèvent une erreur. */
-export function readonly<T>(value: T, path: string): T {
-    if (!canView(value)) {
-        return value;
-    }
-    const existing = readonlyViews.get(value);
-    if (existing !== undefined) {
-        return existing as T;
-    }
-    const fail = (key: PropertyKey): never => {
-        throw new TypeError(
-            `[trame] Les props sont en lecture seule : impossible de modifier "${path}.${String(key)}". ` +
-                "Prévenez le parent avec un callback (ex. props.onChange(...)).",
-        );
-    };
-    const view = new Proxy(value, {
-        get(target, key) {
-            // `this` des getters = l'objet réel (compatible avec les champs #privés).
-            const result = Reflect.get(target, key, target);
-            if (typeof key === "symbol") {
-                return result;
-            }
-            // Invariant des Proxy : une propriété figée doit être renvoyée telle quelle.
-            const descriptor = Object.getOwnPropertyDescriptor(target, key);
-            if (descriptor !== undefined && !descriptor.configurable && descriptor.writable === false) {
-                return result;
-            }
-            return readonly(result, `${path}.${key}`);
-        },
-        set: (_, key) => fail(key),
-        deleteProperty: (_, key) => fail(key),
-        defineProperty: (_, key) => fail(key),
-    });
-    readonlyViews.set(value, view);
-    readonlyTargets.set(view, value);
-    return view as T;
-}
-
 // --- props() -------------------------------------------------------------------------------------
 
 /**
@@ -276,7 +222,7 @@ export function props<S extends Shape>(schema: S): PropsOf<S> {
                 if (value === undefined && validator.hasDefault) {
                     value = validator.defaultValue;
                 }
-                return dev ? readonly(value, `props.${key}`) : value;
+                return value;
             },
             set() {
                 throw new TypeError(`[trame] Les props sont en lecture seule : impossible de modifier "props.${key}".`);
