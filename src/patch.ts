@@ -28,6 +28,10 @@ interface ClassPatch {
 const classPatches = new Map<Function, ClassPatch[]>();
 /** Patchs déjà initialisés pour chaque instance. */
 const initialized = new WeakMap<object, Set<ClassPatch>>();
+/** Incrémentée à chaque ajout ou retrait d'un patch de classe. */
+let patchVersion = 0;
+/** Version des patchs pour laquelle chaque instance est à jour : évite tout parcours aux appels suivants. */
+const upToDate = new WeakMap<object, number>();
 
 let stampTarget: object | null = null;
 /** Classe de base temporaire : son constructeur renvoie l'instance existante, sur laquelle les champs du patch sont posés. */
@@ -52,11 +56,11 @@ function runPatchFields(instance: object, patch: ClassPatch): void {
 
 /** Initialise sur `instance` les champs de tous les patchs qui la concernent (idempotent). */
 export function initPatches(instance: object): void {
-    if (classPatches.size === 0) {
+    if (classPatches.size === 0 || upToDate.get(instance) === patchVersion) {
         return;
     }
     const obj = instance;
-    // Classes de la chaîne de prototypes, de la plus générale à la plus spécifique.
+    // Première rencontre (ou nouveau patch depuis) : classes de la chaîne de prototypes, de la plus générale à la plus spécifique.
     const chain: Function[] = [];
     for (let proto = Object.getPrototypeOf(obj); proto !== null && proto !== Object.prototype; proto = Object.getPrototypeOf(proto)) {
         if (Object.prototype.hasOwnProperty.call(proto, "constructor")) {
@@ -81,6 +85,7 @@ export function initPatches(instance: object): void {
             runPatchFields(obj, p);
         }
     }
+    upToDate.set(obj, patchVersion);
 }
 
 function findDescriptor(proto: object | null, key: PropertyKey): PropertyDescriptor | undefined {
@@ -154,6 +159,7 @@ export function patch<T extends AnyClass | object>(target: T, extension: object)
         const list = classPatches.get(target as Function) ?? [];
         list.push(record);
         classPatches.set(target as Function, list);
+        patchVersion++;
     }
 
     for (const key of keys) {
@@ -202,6 +208,7 @@ export function patch<T extends AnyClass | object>(target: T, extension: object)
                     classPatches.delete(record.target);
                 }
             }
+            patchVersion++;
         }
     };
 }

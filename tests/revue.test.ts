@@ -1,7 +1,7 @@
 // Non-régression : points soulevés par la revue de code (un bloc describe par point).
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { Component, effect, extendTemplate, inheritTemplate, load, props, resource, state, t, xml } from "../src/index";
-import { nextTick } from "../src/index";
+import { nextTick, patch } from "../src/index";
 import { render, settle } from "./helpers";
 
 describe("gestionnaires d'événements : erreurs asynchrones", () => {
@@ -271,5 +271,75 @@ describe("macros loading / error / refresh et membres du composant", () => {
         resolve("ok");
         await settle();
         expect(html()).toBe("<div><p>prêt</p><i>champ</i></div>");
+    });
+});
+
+describe("patch() : pas de coût par appel une fois l'instance initialisée", () => {
+    test("un membre patché ne reparcourt pas la chaîne de prototypes à chaque appel", () => {
+        class Line {
+            price = 2;
+            total() {
+                return this.price;
+            }
+        }
+        const unpatch = patch(
+            Line,
+            class extends Line {
+                @state accessor tax = 1;
+                override total() {
+                    return super.total() + this.tax;
+                }
+            },
+        );
+        try {
+            const line = new Line();
+            expect(line.total()).toBe(3); // initialise les champs du patch
+            const spy = vi.spyOn(Object, "getPrototypeOf");
+            let sum = 0;
+            for (let i = 0; i < 1000; i++) {
+                sum += line.total();
+            }
+            const calls = spy.mock.calls.length;
+            spy.mockRestore();
+            expect(sum).toBe(3000);
+            expect(calls).toBe(0);
+        } finally {
+            unpatch();
+        }
+    });
+
+    test("un patch appliqué après l'initialisation d'une instance est tout de même initialisé", () => {
+        class Item {
+            name = "a";
+            label() {
+                return this.name;
+            }
+        }
+        const unpatch1 = patch(
+            Item,
+            class extends Item {
+                @state accessor suffix = "!";
+                override label() {
+                    return super.label() + this.suffix;
+                }
+            },
+        );
+        const item = new Item();
+        expect(item.label()).toBe("a!");
+        const unpatch2 = patch(
+            Item,
+            class extends Item {
+                @state accessor prefix = "> ";
+                override label() {
+                    return this.prefix + super.label();
+                }
+            },
+        );
+        try {
+            expect(item.label()).toBe("> a!");
+        } finally {
+            unpatch2();
+            unpatch1();
+        }
     });
 });
