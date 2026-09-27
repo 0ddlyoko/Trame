@@ -15,7 +15,7 @@
 
 import { initPatches } from "./patch";
 import { Computed, Effect, PRIORITY_USER, scheduleMicrotask, Signal, untrack } from "./reactivity/core";
-import { getOwner, Owner, runWithOwner } from "./reactivity/owner";
+import { AmbiguousService, getOwner, Owner, runWithOwner } from "./reactivity/owner";
 import { type Fetcher, Resource, type ResourceOptions } from "./reactivity/resource";
 import { reactive } from "./reactivity/store";
 
@@ -220,39 +220,60 @@ class LazyService {
     ) {}
 }
 
-/** Clés sous lesquelles une instance est fournie : sa classe et ses classes parentes. */
-function keysOf(value: object): Function[] {
-    const keys: Function[] = [];
-    for (let proto = Object.getPrototypeOf(value); proto !== null && proto !== Object.prototype; proto = Object.getPrototypeOf(proto)) {
-        if (Object.prototype.hasOwnProperty.call(proto, "constructor")) {
-            keys.push(proto.constructor);
-        }
+/** Classes parentes d'une classe (hors Object). */
+function parentsOf(cls: Function): Function[] {
+    const parents: Function[] = [];
+    for (let parent = Object.getPrototypeOf(cls); parent && parent !== Function.prototype; parent = Object.getPrototypeOf(parent)) {
+        parents.push(parent);
     }
-    return keys;
+    return parents;
 }
 
-/** Enregistre un service sur un scope (utilisé par @provide et par mount({ provide })). */
+/** Nom lisible d'une clé ou d'un service (messages d'erreur). */
+function describeService(value: unknown): string {
+    if (value instanceof LazyService) {
+        return value.Ctor.name || "(classe anonyme)";
+    }
+    if (typeof value === "function") {
+        return value.name || "(classe anonyme)";
+    }
+    if (value !== null && typeof value === "object") {
+        return `une instance de ${(value as object).constructor?.name || "Object"}`;
+    }
+    return String(value);
+}
+
+/**
+ * Enregistre un service sur un scope (utilisé par @provide et par mount({ provide })).
+ * Il est fourni sous sa classe exacte (ou sous `key`), et aussi sous ses classes parentes : on peut
+ * injecter une classe parente, tant qu'un seul service du scope en hérite.
+ */
 export function provideOn(owner: Owner, value: unknown, key?: Key): void {
-    if (typeof value === "function" && key === undefined) {
-        // Classe : instanciée à la première demande.
-        const lazy = new LazyService(value as new () => unknown, owner);
-        owner.provide(value, lazy);
-        for (let parent = Object.getPrototypeOf(value); parent && parent !== Function.prototype; parent = Object.getPrototypeOf(parent)) {
-            owner.provide(parent, lazy);
-        }
+    if (key !== undefined) {
+        owner.provide(key, value, describeService);
         return;
     }
-    if (key !== undefined) {
-        owner.provide(key, value);
+    if (typeof value === "function") {
+        // Classe : instanciée à la première demande.
+        const lazy = new LazyService(value as new () => unknown, owner);
+        owner.provide(value, lazy, describeService);
+        for (const parent of parentsOf(value)) {
+            owner.provideInherited(parent, lazy);
+        }
         return;
     }
     if (value === null || typeof value !== "object") {
         throw new Error("[trame] @provide : la valeur fournie doit être un objet (ou précisez une clé : @provide(Cle))");
     }
-    for (const k of keysOf(value)) {
-        owner.provide(k, value);
+    const cls = (value as object).constructor;
+    owner.provide(cls, value, describeService);
+    for (const parent of parentsOf(cls)) {
+        owner.provideInherited(parent, value);
     }
 }
+
+/** Services en cours d'instanciation (détection des dépendances circulaires). */
+const instantiating: LazyService[] = [];
 
 /** Récupère un service fourni par le scope courant, un ancêtre ou l'application. */
 export function lookupService<T>(key: Key<T>): T {
@@ -261,22 +282,33 @@ export function lookupService<T>(key: Key<T>): T {
         throw new Error(`[trame] @inject(${key.name}) : utilisable seulement pendant la construction d'un composant, d'un plugin ou d'un objet créé par eux`);
     }
     let value = owner.lookup(key);
+    if (value instanceof AmbiguousService) {
+        throw new Error(
+            `[trame] @inject(${key.name}) ambigu : plusieurs services en héritent au même niveau (${value.candidates.map(describeService).join(", ")}). ` +
+                "Injectez la classe exacte, ou fournissez le service voulu sous cette clé : @provide(Cle).",
+        );
+    }
     if (value instanceof LazyService) {
         const lazy = value;
-        const instance = runWithOwner(lazy.owner, () =>
-            untrack(() => {
-                const created = new lazy.Ctor() as object;
-                initPatches(created);
-                return created;
-            }),
-        );
-        // On remplace l'entrée paresseuse par l'instance, pour toutes les clés concernées.
-        const providers = lazy.owner.providers!;
-        for (const [k, v] of providers) {
-            if (v === lazy) {
-                providers.set(k, instance);
-            }
+        if (instantiating.includes(lazy)) {
+            const cycle = [...instantiating.slice(instantiating.indexOf(lazy)), lazy].map(describeService).join(" → ");
+            throw new Error(`[trame] Dépendance circulaire entre services : ${cycle}`);
         }
+        instantiating.push(lazy);
+        let instance: object;
+        try {
+            instance = runWithOwner(lazy.owner, () =>
+                untrack(() => {
+                    const created = new lazy.Ctor() as object;
+                    initPatches(created);
+                    return created;
+                }),
+            );
+        } finally {
+            instantiating.pop();
+        }
+        // On remplace l'entrée paresseuse par l'instance, pour toutes les clés concernées.
+        lazy.owner.replaceProvided(lazy, instance);
         value = instance;
     }
     if (value === undefined) {

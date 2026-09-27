@@ -1,6 +1,6 @@
 // Non-régression : points soulevés par la revue de code (un bloc describe par point).
 import { describe, expect, test, vi } from "vitest";
-import { Component, effect, extendTemplate, inheritTemplate, load, props, resource, state, t, xml } from "../src/index";
+import { Component, effect, extendTemplate, inheritTemplate, inject, load, mount, props, provide, resource, state, t, xml } from "../src/index";
 import { nextTick, patch } from "../src/index";
 import { render, settle } from "./helpers";
 
@@ -341,5 +341,123 @@ describe("patch() : pas de coût par appel une fois l'instance initialisée", ()
             unpatch2();
             unpatch1();
         }
+    });
+});
+
+describe("services : règles de fourniture", () => {
+    class Service {
+        name() {
+            return "service";
+        }
+    }
+    class Rpc extends Service {
+        override name() {
+            return "rpc";
+        }
+    }
+    class Orm extends Service {
+        override name() {
+            return "orm";
+        }
+    }
+
+    function consumer<T>(key: abstract new (...args: never[]) => T, read: (svc: T) => string) {
+        return class Consumer extends Component {
+            static template = xml`<i>{{ value }}</i>`;
+            @inject(key) svc!: T;
+            get value() {
+                return read(this.svc);
+            }
+        };
+    }
+
+    test("le même service fourni deux fois au même niveau : erreur", async () => {
+        const Consumer = consumer(Rpc, (s) => s.name());
+        await expect(mount(Consumer, document.createElement("div"), { provide: [Rpc, Rpc] })).rejects.toThrow(/Rpc.*fourni deux fois/);
+        await expect(mount(Consumer, document.createElement("div"), { provide: [Rpc, new Rpc()] })).rejects.toThrow(/Rpc.*fourni deux fois/);
+        class Twice extends Component {
+            static template = xml`<i/>`;
+            @provide a = new Rpc();
+            @provide b = new Rpc();
+        }
+        await expect(mount(Twice, document.createElement("div"))).rejects.toThrow(/Rpc.*fourni deux fois/);
+    });
+
+    test("un enfant qui fournit à nouveau un service le redéfinit pour ses descendants", async () => {
+        class Special extends Rpc {
+            override name() {
+                return "special";
+            }
+        }
+        const Consumer = consumer(Rpc, (s) => s.name());
+        class Middle extends Component {
+            static template = xml`<Consumer/>`;
+            static components = { Consumer };
+            @provide(Rpc) rpc = new Special();
+        }
+        class Root extends Component {
+            static template = xml`<div><Consumer/><Middle/></div>`;
+            static components = { Consumer, Middle };
+        }
+        const { html } = await render(Root, { provide: [Rpc] });
+        expect(html()).toBe("<div><i>rpc</i><i>special</i></div>");
+    });
+
+    test("deux services différents d'une même classe parente : injecter la parente est ambigu", async () => {
+        const ByBase = consumer(Service, (s) => s.name());
+        const ByRpc = consumer(Rpc, (s) => s.name());
+        const ByOrm = consumer(Orm, (s) => s.name());
+        await expect(mount(ByBase, document.createElement("div"), { provide: [Rpc, new Orm()] })).rejects.toThrow(
+            /inject\(Service\).*ambigu.*Rpc.*Orm/,
+        );
+        class Both extends Component {
+            static template = xml`<div><ByRpc/><ByOrm/></div>`;
+            static components = { ByRpc, ByOrm };
+        }
+        const { html } = await render(Both, { provide: [Rpc, new Orm()] });
+        expect(html()).toBe("<div><i>rpc</i><i>orm</i></div>");
+    });
+
+    test("la classe exacte l'emporte sur une classe parente fournie au même niveau", async () => {
+        class Special extends Rpc {
+            override name() {
+                return "special";
+            }
+        }
+        const ByRpc = consumer(Rpc, (s) => s.name());
+        const { html } = await render(ByRpc, { provide: [new Special(), Rpc] });
+        expect(html()).toBe("<i>rpc</i>");
+    });
+
+    test("un service patché garde son comportement patché une fois injecté", async () => {
+        class Greeter {
+            hello() {
+                return "bonjour";
+            }
+        }
+        const unpatch = patch(Greeter, {
+            hello() {
+                return super.hello() + " !";
+            },
+        });
+        try {
+            const Consumer = consumer(Greeter, (g) => g.hello());
+            const { html } = await render(Consumer, { provide: [Greeter] });
+            expect(html()).toBe("<i>bonjour !</i>");
+        } finally {
+            unpatch();
+        }
+    });
+
+    test("dépendance circulaire entre services : erreur claire", async () => {
+        class Base {}
+        class A {
+            @inject(Base) base!: Base;
+        }
+        class B extends Base {
+            @inject(A) a!: A;
+        }
+        const Consumer = consumer(A, () => "a");
+        await expect(mount(Consumer, document.createElement("div"), { provide: [A, B] })).rejects.toThrow(/circulaire.*A → B → A/);
     });
 });

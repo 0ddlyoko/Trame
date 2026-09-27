@@ -37,6 +37,11 @@ export function onCleanup(fn: () => void): void {
     currentOwner?.onCleanup(fn);
 }
 
+/** Plusieurs services différents fournis au même niveau sous une même classe parente. */
+export class AmbiguousService {
+    constructor(public candidates: unknown[]) {}
+}
+
 export class Owner {
     readonly parent: Owner | null;
     readonly depth: number;
@@ -44,8 +49,10 @@ export class Owner {
     boundary: Boundary | null;
     /** Gestionnaire d'erreurs local : renvoie true si l'erreur est prise en charge. */
     errorHandler: ((error: unknown) => boolean) | null = null;
-    /** Services fournis à ce sous-arbre. */
+    /** Services fournis à ce sous-arbre, sous leur classe exacte (ou une clé explicite). */
     providers: Map<unknown, unknown> | null = null;
+    /** Mêmes services, sous leurs classes parentes (plusieurs candidats : AmbiguousService). */
+    inherited: Map<unknown, unknown> | null = null;
     /** Le scope est-il affiché dans un DOM vivant ? */
     live = false;
     /** Contenu préparé mais pas encore inséré (en attente de données). */
@@ -134,7 +141,10 @@ export class Owner {
         }
     }
 
-    /** Cherche un service fourni par ce scope ou un ancêtre. */
+    /**
+     * Cherche un service fourni par ce scope ou un ancêtre (le plus proche l'emporte). À un même
+     * niveau, un service fourni sous sa classe exacte l'emporte sur un service dont c'est une classe parente.
+     */
     lookup(key: unknown): unknown {
         let owner: Owner | null = this;
         while (owner !== null) {
@@ -142,13 +152,54 @@ export class Owner {
             if (providers !== null && providers.has(key)) {
                 return providers.get(key);
             }
+            const inherited = owner.inherited;
+            if (inherited !== null && inherited.has(key)) {
+                return inherited.get(key);
+            }
             owner = owner.parent;
         }
         return undefined;
     }
 
-    provide(key: unknown, value: unknown): void {
-        (this.providers ??= new Map()).set(key, value);
+    /** Fournit `value` sous `key` (classe exacte ou clé explicite) : une seule fois par scope. */
+    provide(key: unknown, value: unknown, describe: (value: unknown) => string = String): void {
+        const providers = (this.providers ??= new Map());
+        if (providers.has(key)) {
+            throw new Error(
+                `[trame] Service ${describe(key)} fourni deux fois au même niveau (${describe(providers.get(key))} puis ${describe(value)}). ` +
+                    "Un enfant peut le redéfinir pour ses descendants ; pour modifier le service, utilisez patch().",
+            );
+        }
+        providers.set(key, value);
+    }
+
+    /** Fournit `value` sous une de ses classes parentes. Deux services différents : injection ambiguë. */
+    provideInherited(key: unknown, value: unknown): void {
+        const inherited = (this.inherited ??= new Map());
+        const existing = inherited.get(key);
+        if (existing === undefined) {
+            inherited.set(key, value);
+        } else if (existing instanceof AmbiguousService) {
+            existing.candidates.push(value);
+        } else if (existing !== value) {
+            inherited.set(key, new AmbiguousService([existing, value]));
+        }
+    }
+
+    /** Remplace une valeur fournie (service instancié à la première demande) sous toutes ses clés. */
+    replaceProvided(from: unknown, to: unknown): void {
+        for (const map of [this.providers, this.inherited]) {
+            if (map === null) {
+                continue;
+            }
+            for (const [k, v] of map) {
+                if (v === from) {
+                    map.set(k, to);
+                } else if (v instanceof AmbiguousService) {
+                    v.candidates = v.candidates.map((c) => (c === from ? to : c));
+                }
+            }
+        }
     }
 
     /** Signale à la frontière d'attente les ressources lues pendant leur premier chargement. */

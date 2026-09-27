@@ -184,7 +184,13 @@ class OrderForm extends Component {
 mount(App, el, { provide: [Rpc, new User(…)] });   // une classe est instanciée à la première demande
 ```
 
-Un descendant, quelle que soit sa profondeur, récupère `editor` avec `@inject(OrderEditor)`, sans que les niveaux intermédiaires aient à le transmettre. On peut injecter une classe parente : on obtient alors l'instance fournie de la sous-classe.
+Un descendant, quelle que soit sa profondeur, récupère `editor` avec `@inject(OrderEditor)`, sans que les niveaux intermédiaires aient à le transmettre.
+
+Règles :
+- le service fourni le plus proche l'emporte : un enfant peut redéfinir un service pour ses descendants ;
+- un même service ne peut être fourni qu'une fois par niveau (sinon erreur) ; pour le modifier, on le patche (`patch()`) ;
+- on peut injecter une classe parente : on obtient le service qui en hérite. Si plusieurs services d'un même niveau en héritent, l'injection est ambiguë et lève une erreur (injecter la classe exacte, ou fournir sous une clé explicite : `@provide(Cle)`) ;
+- une dépendance circulaire entre services (A injecte B qui injecte A) lève une erreur qui décrit le cycle.
 
 ## Extensibilité (modules)
 
