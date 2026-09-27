@@ -1,6 +1,7 @@
 // Non-régression : points soulevés par la revue de code (un bloc describe par point).
 import { describe, expect, test } from "vitest";
 import { Component, effect, extendTemplate, inheritTemplate, load, props, resource, state, t, xml } from "../src/index";
+import { nextTick } from "../src/index";
 import { render, settle } from "./helpers";
 
 describe("gestionnaires d'événements : erreurs asynchrones", () => {
@@ -207,5 +208,39 @@ describe("objets créés après la construction : rattachés au bon scope", () =
         expect(log).toEqual(["effet 1", "nettoyage 1", "abort 1", "effet 2"]);
         r.destroy();
         expect(log).toEqual(["effet 1", "nettoyage 1", "abort 1", "effet 2", "nettoyage 2", "abort 2"]);
+    });
+});
+
+describe("t-foreach sans t-key : valeurs en double acceptées", () => {
+    test("primitives en double, puis réordonnées", async () => {
+        class C extends Component {
+            static template = xml`<p><span t-foreach="tags" t-as="tag">{{ tag }}{{ tag_index }}</span></p>`;
+            @state accessor tags = ["a", "a", "b"];
+        }
+        const { component, html } = await render(C);
+        expect(html()).toBe("<p><span>a0</span><span>a1</span><span>b2</span></p>");
+        component.tags = ["b", "a", "a", "a"];
+        await nextTick();
+        expect(html()).toBe("<p><span>b0</span><span>a1</span><span>a2</span><span>a3</span></p>");
+        component.tags = ["a"];
+        await nextTick();
+        expect(html()).toBe("<p><span>a0</span></p>");
+    });
+
+    test("un même objet présent deux fois : les lignes existantes sont conservées", async () => {
+        const x = { v: "x" };
+        const y = { v: "y" };
+        class C extends Component {
+            static template = xml`<p><span t-foreach="items" t-as="it">{{ it.v }}</span></p>`;
+            @state accessor items = [x, x, y];
+        }
+        const { component, fixture, html } = await render(C);
+        const spans = Array.from(fixture.querySelectorAll("span"));
+        component.items = [y, x, x];
+        await nextTick();
+        expect(html()).toBe("<p><span>y</span><span>x</span><span>x</span></p>");
+        const after = Array.from(fixture.querySelectorAll("span"));
+        expect(after[0]).toBe(spans[2]);
+        expect(after.slice(1)).toEqual(spans.slice(0, 2));
     });
 });

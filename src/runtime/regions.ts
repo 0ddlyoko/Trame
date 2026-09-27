@@ -283,6 +283,8 @@ function toArray(value: unknown): unknown[] {
 export class ListRegion extends Region {
     private rows: Row[] = [];
     private readonly owner: Owner;
+    /** Sans t-key : clés de remplacement (stables) des 2e, 3e... occurrences d'une même valeur. */
+    private duplicates = new Map<unknown, object[]>();
 
     constructor(
         anchor: Node,
@@ -296,13 +298,43 @@ export class ListRegion extends Region {
         renderEffect(() => {
             const items = toArray(listFn());
             const keyFn = this.keyFn;
-            const keys = keyFn === null ? items : items.map((item, i) => keyFn(item, i));
+            const keys = keyFn === null ? this.identityKeys(items) : items.map((item, i) => keyFn(item, i));
             untrack(() => this.reconcile(items, keys));
         }, loc);
     }
 
     firstNode(): Node {
         return this.rows.length ? itemFirst(this.rows[0]) : this.anchor;
+    }
+
+    /**
+     * Sans t-key, la clé d'une ligne est sa valeur. Une valeur présente plusieurs fois reçoit, pour
+     * chaque occurrence supplémentaire, une clé de remplacement stable d'une mise à jour à l'autre.
+     */
+    private identityKeys(items: unknown[]): unknown[] {
+        const previous = this.duplicates;
+        const next = new Map<unknown, object[]>();
+        const counts = new Map<unknown, number>();
+        const keys = new Array(items.length);
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            const count = counts.get(item) ?? 0;
+            counts.set(item, count + 1);
+            if (count === 0) {
+                keys[i] = item;
+                continue;
+            }
+            let substitutes = next.get(item);
+            if (substitutes === undefined) {
+                substitutes = [];
+                next.set(item, substitutes);
+            }
+            const key = previous.get(item)?.[count - 1] ?? {};
+            substitutes.push(key);
+            keys[i] = key;
+        }
+        this.duplicates = next;
+        return keys;
     }
 
     private reconcile(items: unknown[], keys: unknown[]): void {
