@@ -689,9 +689,14 @@ export class Effect extends Computation {
         }
     }
 
-    /** Appelé par le flush : vérifie les sources puis exécute si nécessaire. */
+    /** Marqué (une source a peut-être changé) et pas encore réexécuté ? */
+    get needsRun(): boolean {
+        return this.state !== CLEAN && !this.disposed;
+    }
+
+    /** Appelé par le flush : vérifie les sources puis exécute si nécessaire (pas sous un scope gelé). */
     update(): void {
-        if (this.disposed || this.state === CLEAN) {
+        if (this.disposed || this.state === CLEAN || this.owner?.suspended) {
             return;
         }
         if (this.state === CHECK && !this.sourcesChanged()) {

@@ -9,7 +9,7 @@
  * fois toutes ses données chargées. Pour un t-if, l'ancien contenu reste affiché en attendant.
  */
 
-import { annotateError, Effect, PRIORITY_RENDER, untrack } from "../reactivity/core";
+import { annotateError, Effect, PRIORITY_RENDER, PRIORITY_RESOURCE, untrack } from "../reactivity/core";
 import { Boundary, getOwner, Owner, runWithOwner } from "../reactivity/owner";
 import { Signal } from "../reactivity/core";
 
@@ -97,8 +97,8 @@ export function buildItem(parent: Owner, build: BlockBuilder, boundary?: Boundar
 }
 
 /** Effet de rendu (exécuté immédiatement). `loc` : localisation dans le template (erreurs). */
-export function renderEffect(fn: () => void, loc?: string): Effect {
-    const effect = new Effect(fn, getOwner(), PRIORITY_RENDER);
+export function renderEffect(fn: () => void, loc?: string, priority = PRIORITY_RENDER): Effect {
+    const effect = new Effect(fn, getOwner(), priority);
     effect.loc = loc;
     effect.run();
     return effect;
@@ -150,6 +150,12 @@ interface PendingSwitch {
     boundary: Boundary;
 }
 
+/**
+ * Pendant un remplacement, le contenu sortant reste affiché mais gelé (Owner.suspend) : il ne suit
+ * plus l'état du parent (props, ressources) et reprend vie si le remplacement est annulé. Le choix de
+ * la clé s'exécute avec la priorité des ressources, pour geler le contenu sortant avant que ses
+ * @resource ne se relancent sur le même changement.
+ */
 export class SwitchRegion extends Region {
     private current: Item | null = null;
     private currentKey: unknown = NONE;
@@ -168,7 +174,7 @@ export class SwitchRegion extends Region {
         renderEffect(() => {
             const key = keyFn();
             untrack(() => this.update(key));
-        }, loc);
+        }, loc, PRIORITY_RESOURCE);
     }
 
     firstNode(): Node {
@@ -183,6 +189,7 @@ export class SwitchRegion extends Region {
             this.cancelPending();
         }
         if (key === this.currentKey) {
+            this.current?.owner.resume();
             return;
         }
         const builder = this.builderFor(key);
@@ -209,12 +216,15 @@ export class SwitchRegion extends Region {
             () => this.commitPending(),
             (error) => {
                 this.cancelPending();
+                this.current?.owner.resume();
                 owner.handleError(error);
             },
         );
+        this.current?.owner.suspend();
         try {
             item = buildItem(owner, builder, boundary);
         } catch (e) {
+            this.current?.owner.resume();
             owner.handleError(annotateError(e, this.loc, owner));
             return;
         }
@@ -321,7 +331,7 @@ export class ListRegion extends Region {
             const keyFn = this.keyFn;
             const keys = keyFn === null ? this.identityKeys(items) : items.map((item, i) => keyFn(item, i));
             untrack(() => this.reconcile(items, keys));
-        }, loc);
+        }, loc, PRIORITY_RESOURCE);
     }
 
     firstNode(): Node {

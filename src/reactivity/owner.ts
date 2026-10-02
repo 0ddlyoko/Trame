@@ -68,6 +68,7 @@ export class Owner {
     live = false;
     /** Contenu préparé mais pas encore inséré (en attente de données). */
     detached = false;
+    suspended = false;
     disposed = false;
 
     private children: Set<Owner> | null = null;
@@ -103,6 +104,7 @@ export class Owner {
         this.app = parent ? parent.app : null;
         this.boundary = parent ? parent.boundary : null;
         if (parent) {
+            this.suspended = parent.suspended;
             if (parent.disposed) {
                 this.disposed = true;
             } else {
@@ -168,6 +170,43 @@ export class Owner {
                     cb();
                 } catch (e) {
                     this.handleError(e);
+                }
+            }
+        }
+    }
+
+    /**
+     * Gèle le sous-arbre : ses effets (rendu, ressources, @effect) ne s'exécutent plus, ses computed ne
+     * sont donc plus relus. Un contenu en cours de remplacement ne réagit plus à un état qui ne le
+     * concerne plus (ex. l'enregistrement de l'ancienne vue passé à null).
+     */
+    suspend(): void {
+        if (this.suspended || this.disposed) {
+            return;
+        }
+        this.suspended = true;
+        if (this.children !== null) {
+            for (const child of this.children) {
+                child.suspend();
+            }
+        }
+    }
+
+    /** Dégèle le sous-arbre : les effets marqués pendant le gel se rattrapent au prochain flush. */
+    resume(): void {
+        if (!this.suspended || this.disposed) {
+            return;
+        }
+        this.suspended = false;
+        if (this.children !== null) {
+            for (const child of this.children) {
+                child.resume();
+            }
+        }
+        if (this.effects !== null) {
+            for (const effect of this.effects) {
+                if (effect.needsRun) {
+                    effect.schedule();
                 }
             }
         }

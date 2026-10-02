@@ -2,6 +2,12 @@
 
 Format : une section par version. Les changements incompatibles sont listés en premier.
 
+## [Non publié]
+
+### Corrections
+
+- Changement de vue (`t-if`, `t-key`, `t-component`) : le contenu sortant, encore affiché pendant le chargement du nouveau, est gelé. Ses liaisons, `@computed`, `@effect` et `@resource` ne se relancent plus avec l'état destiné au nouveau contenu ; il reprend vie si le changement est annulé. Une ligne retirée d'un `t-foreach` ne recharge plus ses données juste avant son retrait.
+
 ## [0.2.0] - 2026-09-28
 
 ### Changements incompatibles

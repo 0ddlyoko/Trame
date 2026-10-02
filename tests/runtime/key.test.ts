@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { Component, effect, load, nextTick, props, resource, state, t, xml } from "../../src/index";
+import { batch, Component, effect, load, nextTick, props, resource, state, t, xml } from "../../src/index";
 import { cleanup, click, deferred, render, settle } from "../../src/testing";
 
 afterEach(cleanup);
@@ -138,5 +138,142 @@ describe("t-key hors d'une boucle", () => {
         expect(fixture.innerHTML).toBe("<div><h1>SO002</h1></div>");
         root.destroy();
         fixture.remove();
+    });
+
+    test("instance sortante gelée : elle ne recharge pas ses données avec les props de la nouvelle", async () => {
+        const fetchFor = vi.fn(async (model: string) => `données ${model}`);
+        class Child extends Component {
+            static template = xml`<p>{{ data }}</p>`;
+            props = props({ model: t.string() });
+            @resource accessor data = load(() => this.props.model, (model) => fetchFor(model));
+        }
+        class Parent extends Component {
+            static template = xml`<div><Child t-key="id" model="model"/></div>`;
+            static components = { Child };
+            @state accessor id = 1;
+            @state accessor model = "a";
+        }
+        const { component, html } = await render(Parent);
+        fetchFor.mockClear();
+        batch(() => {
+            component.id = 2;
+            component.model = "b";
+        });
+        await settle();
+        expect(fetchFor.mock.calls).toEqual([["b"]]);
+        expect(html()).toBe("<div><p>données b</p></div>");
+    });
+
+    test("remplacement annulé (retour à l'ancienne clé) : l'instance courante reprend vie et suit son parent", async () => {
+        const loads = new Map<string, ReturnType<typeof deferred<string>>>();
+        const fetchFor = vi.fn((model: string) => {
+            const d = deferred<string>();
+            loads.set(model, d);
+            return d.promise;
+        });
+        class Child extends Component {
+            static template = xml`<p>{{ props.model }}:{{ data }}</p>`;
+            props = props({ model: t.string() });
+            @resource accessor data = load(() => this.props.model, (model) => fetchFor(model));
+        }
+        class Parent extends Component {
+            static template = xml`<div><Child t-key="id" model="model"/></div>`;
+            static components = { Child };
+            @state accessor id = 1;
+            @state accessor model = "a";
+        }
+        const fixture = document.createElement("div");
+        document.body.appendChild(fixture);
+        const { mount } = await import("../../src/index");
+        const promise = mount(Parent, fixture);
+        loads.get("a")!.resolve("A");
+        const root = await promise;
+        batch(() => {
+            root.component.id = 2;
+            root.component.model = "b";
+        });
+        await settle();
+        expect(fixture.innerHTML).toBe("<div><p>a:A</p></div>");
+        root.component.id = 1;
+        await settle();
+        expect(fetchFor.mock.calls).toEqual([["a"], ["b"], ["b"]]);
+        loads.get("b")!.resolve("B");
+        await settle();
+        expect(fixture.innerHTML).toBe("<div><p>b:B</p></div>");
+        root.destroy();
+        fixture.remove();
+    });
+
+    test("deux changements de clé pendant un chargement : l'instance courante reste gelée puis est retirée", async () => {
+        const loads = new Map<string, ReturnType<typeof deferred<string>>>();
+        const fetchFor = vi.fn((model: string) => {
+            const d = deferred<string>();
+            loads.set(model, d);
+            return d.promise;
+        });
+        class Child extends Component {
+            static template = xml`<p>{{ data }}</p>`;
+            props = props({ model: t.string() });
+            @resource accessor data = load(() => this.props.model, (model) => fetchFor(model));
+        }
+        class Parent extends Component {
+            static template = xml`<div><Child t-key="id" model="model"/></div>`;
+            static components = { Child };
+            @state accessor id = 1;
+            @state accessor model = "a";
+        }
+        const fixture = document.createElement("div");
+        document.body.appendChild(fixture);
+        const { mount } = await import("../../src/index");
+        const promise = mount(Parent, fixture);
+        loads.get("a")!.resolve("A");
+        const root = await promise;
+        batch(() => {
+            root.component.id = 2;
+            root.component.model = "b";
+        });
+        await settle();
+        batch(() => {
+            root.component.id = 3;
+            root.component.model = "c";
+        });
+        await settle();
+        expect(fetchFor.mock.calls).toEqual([["a"], ["b"], ["c"]]);
+        expect(fixture.innerHTML).toBe("<div><p>A</p></div>");
+        loads.get("b")!.resolve("B");
+        await settle();
+        expect(fixture.innerHTML).toBe("<div><p>A</p></div>");
+        loads.get("c")!.resolve("C");
+        await settle();
+        expect(fixture.innerHTML).toBe("<div><p>C</p></div>");
+        root.component.model = "d";
+        await settle();
+        expect(fetchFor.mock.calls.at(-1)).toEqual(["d"]);
+        root.destroy();
+        fixture.remove();
+    });
+
+    test("t-foreach : une ligne retirée ne recharge pas ses données avec le nouvel état", async () => {
+        const fetchFor = vi.fn(async (key: string) => key);
+        class Row extends Component {
+            static template = xml`<li>{{ data }}</li>`;
+            props = props({ id: t.number(), model: t.string() });
+            @resource accessor data = load(() => `${this.props.id}${this.props.model}`, (key) => fetchFor(key));
+        }
+        class Parent extends Component {
+            static template = xml`<ul><Row t-foreach="ids" t-as="id" t-key="id" id="id" model="model"/></ul>`;
+            static components = { Row };
+            @state accessor ids = [1, 2];
+            @state accessor model = "a";
+        }
+        const { component, html } = await render(Parent);
+        fetchFor.mockClear();
+        batch(() => {
+            component.ids = [2];
+            component.model = "b";
+        });
+        await settle();
+        expect(fetchFor.mock.calls).toEqual([["2b"]]);
+        expect(html()).toBe("<ul><li>2b</li></ul>");
     });
 });

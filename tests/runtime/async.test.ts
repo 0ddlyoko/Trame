@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { Component, load, loading, mount, nextTick, props, refresh, resource, state, t, xml } from "../../src/index";
+import { Component, computed, effect, load, loading, mount, nextTick, props, refresh, resource, state, t, xml } from "../../src/index";
 import { deferred, render, settle } from "../helpers";
 
 interface Order {
@@ -90,6 +90,74 @@ describe("@resource dans les composants", () => {
         details.resolve("détails");
         await settle();
         expect(html()).toBe("<div><p>détails</p></div>");
+    });
+
+    test("changement de vue : l'ancienne, encore affichée, n'est plus mise à jour", async () => {
+        const details = deferred<string>();
+        const computedRuns = vi.fn();
+        const effectRuns = vi.fn();
+        class OrderView extends Component {
+            static template = xml`<p>{{ title }}</p>`;
+            props = props({ order: t.any<{ name: string } | null>() });
+            @computed get title(): string {
+                computedRuns();
+                return this.props.order!.name;
+            }
+            @effect track(): void {
+                effectRuns(this.props.order!.name);
+            }
+        }
+        class DetailsView extends Component {
+            static template = xml`<p>{{ details }}</p>`;
+            @resource accessor details = load(() => details.promise);
+        }
+        class Host extends Component {
+            static template = xml`<div><OrderView t-if="view === 'order'" order="order"/><DetailsView t-else=""/></div>`;
+            static components = { OrderView, DetailsView };
+            @state accessor view = "order";
+            @state accessor order: { name: string } | null = { name: "SO001" };
+        }
+        const { component, html } = await render(Host);
+        computedRuns.mockClear();
+        effectRuns.mockClear();
+        component.view = "details";
+        component.order = null;
+        await settle();
+        expect(html()).toBe("<div><p>SO001</p></div>");
+        expect(computedRuns).not.toHaveBeenCalled();
+        expect(effectRuns).not.toHaveBeenCalled();
+        details.resolve("détails");
+        await settle();
+        expect(html()).toBe("<div><p>détails</p></div>");
+    });
+
+    test("changement de vue annulé avant la fin du chargement : l'ancienne vue rattrape les changements", async () => {
+        const details = deferred<string>();
+        class OrderView extends Component {
+            static template = xml`<p>{{ props.name }}</p>`;
+            props = props({ name: t.string() });
+        }
+        class DetailsView extends Component {
+            static template = xml`<p>{{ details }}</p>`;
+            @resource accessor details = load(() => details.promise);
+        }
+        class Host extends Component {
+            static template = xml`<div><OrderView t-if="view === 'order'" name="name"/><DetailsView t-else=""/></div>`;
+            static components = { OrderView, DetailsView };
+            @state accessor view = "order";
+            @state accessor name = "SO001";
+        }
+        const { component, html } = await render(Host);
+        component.view = "details";
+        component.name = "SO002";
+        await settle();
+        expect(html()).toBe("<div><p>SO001</p></div>");
+        component.view = "order";
+        await settle();
+        expect(html()).toBe("<div><p>SO002</p></div>");
+        component.name = "SO003";
+        await settle();
+        expect(html()).toBe("<div><p>SO003</p></div>");
     });
 
     test("rechargement : l'ancien contenu reste affiché, loading(x) dans le template", async () => {
