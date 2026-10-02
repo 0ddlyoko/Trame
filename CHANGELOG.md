@@ -2,7 +2,7 @@
 
 Format : une section par version. Les changements incompatibles sont listés en premier.
 
-## [Non publié]
+## [0.2.1] - 2026-10-02
 
 ### Corrections
 
