@@ -2,6 +2,12 @@
 
 Format : une section par version. Les changements incompatibles sont listés en premier.
 
+## [0.2.3] - 2026-10-03
+
+### Corrections
+
+- `<Suspense>` : une ressource dont la source (`load(source, fetcher)`) lit une autre ressource pas encore chargée ne bloque plus la frontière parente. Le `<Suspense>` qui entoure sa lecture affiche son fallback, puis le contenu une fois la source et les données arrivées. Auparavant, un changement de vue (`t-key`, `t-component`) gardait l'ancienne vue affichée jusqu'au chargement de la source, et un `t-if` qui s'ouvrait n'affichait rien.
+
 ## [0.2.2] - 2026-10-03
 
 ### Corrections

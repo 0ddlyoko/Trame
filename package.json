@@ -1,6 +1,6 @@
 {
   "name": "trame",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Framework TypeScript réactif à base de signaux : composants, templates compilés, asynchrone, plugins.",
   "type": "module",
   "main": "dist/trame.js",
