@@ -2,6 +2,12 @@
 
 Format : une section par version. Les changements incompatibles sont listés en premier.
 
+## [0.2.2] - 2026-10-03
+
+### Corrections
+
+- Erreur au premier montage interceptée par une `<ErrorBoundary>` : `mount()` ne reste plus bloqué quand le fallback détruit une ressource encore attendue (en chargement, ou dont l'arrivée venait de rendre le contenu fautif). Auparavant la page restait vide, sans rejet de `mount()` ni appel à `onError`.
+
 ## [0.2.1] - 2026-10-02
 
 ### Corrections
