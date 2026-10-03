@@ -2,7 +2,7 @@
 // proche (ou, à défaut, jusqu'au premier gestionnaire : onError, ou le rejet de mount()).
 import { describe, expect, test } from "vitest";
 import { Component, type ComponentClass, computed, effect, load, mount, nextTick, props, registerTemplate, resource, state, t, xml } from "../src/index";
-import { render, settle } from "./helpers";
+import { deferred, render, settle } from "./helpers";
 
 const FALLBACK = `<t t-set-slot="fallback" t-slot-scope="e">KO {{ e.error.message }}</t>`;
 
@@ -169,6 +169,44 @@ describe("erreur au montage d'un contenu qui apparaît après le premier afficha
         component.id = 2;
         await settle();
         expect(html()).toBe("<div>KO id 2</div>");
+    });
+});
+
+describe("fallback pendant le premier montage : les ressources détruites ne bloquent pas mount()", () => {
+    test("erreur rendue par l'arrivée d'une ressource, dans son propre commit", async () => {
+        registerTemplate("err.mount.commit", `<i>{{ a + }}</i>`);
+        class Bad extends Component {
+            static template = "err.mount.commit";
+        }
+        const data = deferred<number>();
+        class Loader extends Component {
+            static template = xml`<t t-if="data"><t t-component="bad"/></t>`;
+            bad = Bad;
+            @resource accessor data = load(() => data.promise);
+        }
+        class Parent extends Component {
+            static template = xml`<div><ErrorBoundary>${FALLBACK}<Loader/></ErrorBoundary></div>`;
+            static components = { Loader };
+        }
+        const mounting = render(Parent);
+        await settle();
+        data.resolve(1);
+        const { html } = await mounting;
+        expect(html()).toMatch(/^<div>KO .*a \+/);
+    });
+
+    test("ressource encore en chargement dans le contenu remplacé par le fallback", async () => {
+        const slow = deferred<string>();
+        class Slow extends Component {
+            static template = xml`<b>{{ data }}</b>`;
+            @resource accessor data = load(() => slow.promise);
+        }
+        class Parent extends Component {
+            static template = xml`<div><ErrorBoundary>${FALLBACK}<Slow/><Boom/></ErrorBoundary></div>`;
+            static components = { Slow, Boom };
+        }
+        const { html } = await render(Parent);
+        expect(html()).toBe("<div>KO constructeur</div>");
     });
 });
 

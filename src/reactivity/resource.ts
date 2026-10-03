@@ -394,6 +394,11 @@ export class Resource<T> implements PendingSource {
         controller?.abort();
     }
 
+    /**
+     * Les boundaries qui attendaient cette ressource cessent de l'attendre : détruite (ex. par le
+     * fallback d'une <ErrorBoundary>, parfois au milieu de son propre commit), elle ne chargera plus,
+     * et un montage en attente resterait bloqué sans erreur.
+     */
     dispose(): void {
         if (this.disposed) {
             return;
@@ -404,7 +409,7 @@ export class Resource<T> implements PendingSource {
         this.transition?.drop(this as Resource<unknown>);
         this.transition = null;
         this.tracker?.dispose();
-        this.waiters.clear();
+        this.notifyWaiters();
     }
 }
 
