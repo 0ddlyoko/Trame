@@ -358,6 +358,66 @@ describe("<Suspense>", () => {
         await settle();
         expect(html()).toBe("<div><h1>Titre</h1><b>12</b></div>");
     });
+
+    /** Une vue dont les lignes dépendent de colonnes chargées à part (la source attend une ressource). */
+    function viewWithSourcedRows(arch: Promise<string>, rows: Promise<string[]>) {
+        return class Rows extends Component {
+            static template = xml`<div><h2>Vue</h2><Suspense><t t-set-slot="fallback"><i>attente</i></t><p>{{ records.join("-") }}</p></Suspense></div>`;
+            @resource accessor arch = load(() => arch);
+            @computed get columns(): string[] {
+                return this.arch === undefined ? [] : this.arch.split(",");
+            }
+            @resource accessor records = load(
+                () => this.columns,
+                (columns) => rows.then((values) => values.map((value) => `${value}:${columns.length}`)),
+            );
+        };
+    }
+
+    test("une ressource dont la source attend : le fallback s'affiche au changement de vue (t-key)", async () => {
+        const arch = deferred<string>();
+        const rows = deferred<string[]>();
+        class Before extends Component {
+            static template = xml`<p>avant</p>`;
+        }
+        const After = viewWithSourcedRows(arch.promise, rows.promise);
+        class Page extends Component {
+            static template = xml`<section><t t-component="view" t-key="kind"/></section>`;
+            @state accessor kind = "before";
+            get view() {
+                return this.kind === "before" ? Before : After;
+            }
+        }
+        const { html, component } = await render(Page);
+        component.kind = "after";
+        await settle();
+        expect(html()).toBe("<section><div><h2>Vue</h2><i>attente</i></div></section>");
+        arch.resolve("a,b");
+        await settle();
+        expect(html()).toBe("<section><div><h2>Vue</h2><i>attente</i></div></section>");
+        rows.resolve(["x", "y"]);
+        await settle();
+        expect(html()).toBe("<section><div><h2>Vue</h2><p>x:2-y:2</p></div></section>");
+    });
+
+    test("une ressource dont la source attend : le fallback s'affiche quand un t-if s'ouvre", async () => {
+        const arch = deferred<string>();
+        const rows = deferred<string[]>();
+        const Rows = viewWithSourcedRows(arch.promise, rows.promise);
+        class Page extends Component {
+            static template = xml`<section><t t-if="shown"><Rows/></t></section>`;
+            static components = { Rows };
+            @state accessor shown = false;
+        }
+        const { html, component } = await render(Page);
+        component.shown = true;
+        await settle();
+        expect(html()).toBe("<section><div><h2>Vue</h2><i>attente</i></div></section>");
+        arch.resolve("a");
+        rows.resolve(["x"]);
+        await settle();
+        expect(html()).toBe("<section><div><h2>Vue</h2><p>x:1</p></div></section>");
+    });
 });
 
 describe("<ErrorBoundary>", () => {

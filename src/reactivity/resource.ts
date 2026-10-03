@@ -139,6 +139,15 @@ class ResourceTracker extends Effect {
         super(() => resource.execute(), owner, PRIORITY_RESOURCE);
     }
 
+    /**
+     * Une donnée en attente lue par la source ne fait pas attendre la frontière du propriétaire :
+     * c'est la ressource elle-même qui est signalée en attente à chaque lecteur, dans sa propre
+     * frontière (un <Suspense> autour du lecteur affiche donc son fallback).
+     */
+    override get waitsForPending(): boolean {
+        return false;
+    }
+
     override mark(state: number): void {
         if (this.state < state) {
             this.state = state;
